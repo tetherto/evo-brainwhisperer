@@ -1,0 +1,6 @@
+__pycache__
+outputs
+*.egg-info
+CLAUDE.md
+.pytest_cache
+.envrc
