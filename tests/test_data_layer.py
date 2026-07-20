@@ -4,10 +4,9 @@ import torch
 from torch.utils.data import ConcatDataset, DataLoader
 from transformers import WhisperTokenizer
 
-import brainwhisperer.data.datasets.nejm    # noqa: F401 — triggers @register_dataset
-import brainwhisperer.data.datasets.willet  # noqa: F401
-import brainwhisperer.data.datasets.kunz    # noqa: F401
-
+import brainwhisperer.data.datasets.card  # noqa: F401 — triggers @register_dataset
+import brainwhisperer.data.datasets.kunz  # noqa: F401
+import brainwhisperer.data.datasets.willett  # noqa: F401
 from brainwhisperer.data.batch import NeuralBatch
 from brainwhisperer.data.collate import NeuralCollator
 from brainwhisperer.data.registry import get_dataset
@@ -29,14 +28,24 @@ def _one_batch(dataset_name: str, split: str = "train") -> NeuralBatch:
 
 def _assert_batch_shapes(batch: NeuralBatch, name: str):
     B = BATCH_SIZE
-    assert batch.signals.ndim == 3,  f"[{name}] signals must be 3D, got {batch.signals.shape}"
+    assert batch.signals.ndim == 3, (
+        f"[{name}] signals must be 3D, got {batch.signals.shape}"
+    )
     assert batch.signals.shape[0] == B
-    assert batch.signals.shape[1] == 512, f"[{name}] expected 512 channels, got {batch.signals.shape[1]}"
-    assert batch.signals.dtype == torch.float32, f"[{name}] signals dtype {batch.signals.dtype}"
+    assert batch.signals.shape[1] == 512, (
+        f"[{name}] expected 512 channels, got {batch.signals.shape[1]}"
+    )
+    assert batch.signals.dtype == torch.float32, (
+        f"[{name}] signals dtype {batch.signals.dtype}"
+    )
 
-    assert batch.labels.ndim == 2,  f"[{name}] labels must be 2D, got {batch.labels.shape}"
+    assert batch.labels.ndim == 2, (
+        f"[{name}] labels must be 2D, got {batch.labels.shape}"
+    )
     assert batch.labels.shape[0] == B
-    assert batch.labels.dtype == torch.long, f"[{name}] labels dtype {batch.labels.dtype}"
+    assert batch.labels.dtype == torch.long, (
+        f"[{name}] labels dtype {batch.labels.dtype}"
+    )
 
     assert batch.sbj_idx.shape == (B,), f"[{name}] sbj_idx shape {batch.sbj_idx.shape}"
     assert batch.sbj_idx.dtype == torch.long
@@ -48,14 +57,15 @@ def _assert_batch_shapes(batch: NeuralBatch, name: str):
     assert batch.lengths.dtype == torch.long
 
     assert (batch.lengths > 0).all(), f"[{name}] all lengths must be positive"
-    assert (batch.signals.shape[2] >= batch.lengths).all(), \
+    assert (batch.signals.shape[2] >= batch.lengths).all(), (
         f"[{name}] signal T < reported length for some samples"
+    )
 
 
-def test_nejm_batch_shapes():
-    batch = _one_batch("nejm")
-    _assert_batch_shapes(batch, "nejm")
-    assert (batch.sbj_idx == 0).all(), "NEJM sbj_idx must be 0"
+def test_card_batch_shapes():
+    batch = _one_batch("card")
+    _assert_batch_shapes(batch, "card")
+    assert (batch.sbj_idx == 0).all(), "Card sbj_idx must be 0"
 
 
 def test_willet_batch_shapes():
@@ -83,9 +93,9 @@ def test_sampler_structure():
     replacement); the DDP non-overlap guarantee is tested via seed offset and is
     not exercised here (requires multiple ranks).
     """
-    nejm = get_dataset("nejm")(split="train")
+    card = get_dataset("card")(split="train")
     willet = get_dataset("willet")(split="train")
-    combined = ConcatDataset([nejm, willet])
+    combined = ConcatDataset([card, willet])
 
     days_per_batch = 2
     sampler = StratifiedDayBatchSampler(
@@ -99,8 +109,9 @@ def test_sampler_structure():
             f"Expected {BATCH_SIZE} indices per batch, got {len(batch_indices)}"
         )
         # All indices must be valid
-        assert all(0 <= i < len(combined) for i in batch_indices), \
+        assert all(0 <= i < len(combined) for i in batch_indices), (
             "Sampler returned out-of-range index"
+        )
 
 
 def test_augmentations_shapes():

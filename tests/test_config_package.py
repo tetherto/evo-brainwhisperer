@@ -35,4 +35,4 @@ def test_paths_imports_with_env_vars(run_python, env_with_paths):
 def test_paths_raises_on_missing_env_var(run_python, env_without_paths):
     result = run_python("import brainwhisperer.config.paths", env=env_without_paths)
     assert result.returncode != 0
-    assert "NEJM_ROOT" in result.stderr, result.stderr
+    assert "CARD_ROOT" in result.stderr, result.stderr

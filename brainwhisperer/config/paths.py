@@ -11,7 +11,7 @@ def _require(var: str) -> str:
     return val
 
 
-NEJM_ROOT   = _require("NEJM_ROOT")
-KUNZ_ROOT   = _require("KUNZ_ROOT")
-WILLET_CODE = _require("WILLET_CODE")
-RNN_ARGS    = _require("RNN_ARGS")
+CARD_ROOT = _require("CARD_ROOT")
+KUNZ_ROOT = _require("KUNZ_ROOT")
+WILLETT_ROOT = _require("WILLETT_ROOT")
+RNN_ARGS = _require("RNN_ARGS")

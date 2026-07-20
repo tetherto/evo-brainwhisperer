@@ -18,6 +18,7 @@ def run_train():
             text=True,
             env=env if env is not None else os.environ,
         )
+
     return _run
 
 
@@ -31,6 +32,7 @@ def run_python():
             text=True,
             env=env if env is not None else os.environ,
         )
+
     return _run
 
 
@@ -38,9 +40,9 @@ def run_python():
 def env_with_paths():
     return {
         **os.environ,
-        "NEJM_ROOT": "/tmp",
+        "CARD_ROOT": "/tmp",
         "KUNZ_ROOT": "/tmp",
-        "WILLET_CODE": "/tmp",
+        "WILLETT_ROOT": "/tmp",
         "RNN_ARGS": "/tmp/rnn_args.yaml",
     }
 
@@ -48,6 +50,7 @@ def env_with_paths():
 @pytest.fixture
 def env_without_paths():
     return {
-        k: v for k, v in os.environ.items()
-        if k not in ("NEJM_ROOT", "KUNZ_ROOT", "WILLET_CODE", "RNN_ARGS")
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("CARD_ROOT", "KUNZ_ROOT", "WILLET_CODE", "RNN_ARGS")
     }
