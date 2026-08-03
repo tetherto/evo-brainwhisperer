@@ -1,8 +1,7 @@
 import math
 
 import torch
-import torch.nn as nn
-from torch import Tensor
+from torch import Tensor, nn
 
 
 class PositionalEncoding(nn.Module):
@@ -10,9 +9,9 @@ class PositionalEncoding(nn.Module):
     Sinusoidal encoding table. Given integer indices of any shape (...,),
     returns the corresponding rows (..., d_model // 2).
 
-    Note that each token's dimensions (d_model) are split in two halves, where
-    the first half carries content features, the second half is reserved for position/day information.
-    This class only fills the second half, so it produces vectors of length d_model // 2.
+    Each token's vector is split into two disjoint halves: the first half
+    is used for session encoding, the second for temporal encoding.
+    This class produces vectors of length d_model // 2, used for either half.
     """
 
     def __init__(self, d_model: int, max_len: int = 10000):

@@ -262,7 +262,10 @@ def _orig_full_embed(x_btc, day_idx, ckpt_weights, session_to_orig_month, orig_m
     ))
     x = out_bct.transpose(1, 2)  # (B, 1500, 384)
 
-    # --- day encoding (sinusoidal, last d_model//2 = 192 dims) ---
+    # --- session encoding (sinusoidal, first d_model//2 = 192 dims) ---
+    # Paper Eq.2: session enc occupies the first half, temporal enc the second half.
+    # The original codebase uses the opposite convention (session in last half); we
+    # follow the paper. The weight matrices are learned, so this is equivalent.
     d_model = x.shape[2]
     half = d_model // 2
     max_len = n_days
@@ -275,7 +278,7 @@ def _orig_full_embed(x_btc, day_idx, ckpt_weights, session_to_orig_month, orig_m
     pe[:, 1::2] = torch.cos(position * div_term[: half // 2])
 
     day_enc = pe[day_idx]  # (B, 192)
-    x[:, :, half:] = x[:, :, half:] + day_enc.unsqueeze(1)
+    x[:, :, :half] = x[:, :, :half] + day_enc.unsqueeze(1)
 
     return x  # (B, 1500, 384)
 

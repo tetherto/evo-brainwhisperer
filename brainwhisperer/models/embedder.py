@@ -1,7 +1,6 @@
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from torch import Tensor
+from torch import Tensor, nn
 
 from brainwhisperer.config.schema import BWEmbedderConfig
 from brainwhisperer.models.positional_encoding import PositionalEncoding
@@ -17,9 +16,9 @@ class BWEmbedder(nn.Module):
     or (B, n_patches, d_model) [patch mode].
 
     Forward order (conv mode):
-        1. Month/day projection in raw feature space (C × C), before any learned mixing
+        1. Month/day projection in raw feature space (C × C)
         2. Convolutional tokenisation: conv1 + conv2 → (B, 1500, d_model)
-        3. Day encoding: sinusoidal or learnable vector added to last d_model//2 dims
+        3. Session encoding: sinusoidal or learnable vector added to first d_model//2 dims
 
     One instance per subject group; conv weights are shared across instances
     by BrainWhisperer after construction (when all groups have the same C).
@@ -135,7 +134,7 @@ class BWEmbedder(nn.Module):
         return x
 
     # ------------------------------------------------------------------
-    # Day projections  (raw feature space, before tokenisation)
+    # Day projections
     # ------------------------------------------------------------------
 
     def _apply_day_proj(self, signals: Tensor, day_idx: Tensor) -> Tensor:
@@ -200,6 +199,6 @@ class BWEmbedder(nn.Module):
     def _add_day_encoding(self, x: Tensor, day_idx: Tensor) -> Tensor:
         day_enc = self.day_encoding(day_idx)  # (B, d_model//2)
         half = self.d_model // 2
-        left = x[:, :, :half]
-        right = x[:, :, half:] + day_enc.unsqueeze(1)
+        left = x[:, :, :half] + day_enc.unsqueeze(1)  # session encoding on first half
+        right = x[:, :, half:]  # the encoder applies temporal encoding on this half
         return torch.cat([left, right], dim=-1)
