@@ -6,7 +6,7 @@ from transformers import WhisperForConditionalGeneration
 
 from brainwhisperer.config.schema import BWModelConfig
 from brainwhisperer.data.batch import NeuralBatch
-from brainwhisperer.models.embedder import BWEmbedder
+from brainwhisperer.models.embedder import _MAX_SOURCE_POSITIONS, BWEmbedder
 from brainwhisperer.models.encoder import BWEncoder
 
 # Whisper beginning of sequence (BOS): <|en|> <|transcribe|> <|notimestamps|>
@@ -69,6 +69,7 @@ class BrainWhisperer(nn.Module):
         # CTC heads
         # Unfold consecutive tokens into a single CTC frame (80 ms windows).
         self._unfold_width = 4 // cfg.embedder.stride_2  # 2 when stride_2=2
+        self._stride_2 = cfg.embedder.stride_2
         d_model = cfg.embedder.d_model
         ctc_in = d_model * self._unfold_width
         vocab_size = whisper.config.vocab_size
@@ -91,10 +92,18 @@ class BrainWhisperer(nn.Module):
         phone_logits = self.phone_head(self._ctc_unfold(intermediate))
         char_logits = self.char_head(self._ctc_unfold(intermediate))
 
+        # CTC frame count per sample
+        raw_len = batch.lengths
+        x_len_emb = (raw_len // self._stride_2 + raw_len % self._stride_2).clamp(
+            max=_MAX_SOURCE_POSITIONS
+        )
+        x_len = (x_len_emb // self._unfold_width).long()
+
         return {
             "ce_loss": whisper_out.loss,
             "phone_logits": phone_logits,
             "char_logits": char_logits,
+            "x_len": x_len,
         }
 
     def generate(self, batch: NeuralBatch, **kwargs) -> Tensor:
