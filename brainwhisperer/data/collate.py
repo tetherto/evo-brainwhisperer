@@ -49,10 +49,19 @@ class NeuralCollator:
         labels = tok_out["input_ids"][:, 1:]
         labels = labels.masked_fill(labels == self.tokenizer.pad_token_id, -100)
 
+        # Collate phoneme targets if every sample in the batch provides them.
+        phone_seq = phone_seq_len = None
+        if all("seq_class_ids" in s for s in batch):
+            seqs = [s["seq_class_ids"] for s in batch]
+            phone_seq_len = torch.tensor([len(s) for s in seqs], dtype=torch.long)
+            phone_seq = pad_sequence(seqs, batch_first=True, padding_value=0)
+
         return NeuralBatch(
             signals=neural_features.permute(0, 2, 1),  # (B, T_max, C) → (B, C, T_max)
             labels=labels,
             sbj_idx=sbj_idx,
             day_idx=day,
             lengths=neural_lengths,
+            phone_seq=phone_seq,
+            phone_seq_len=phone_seq_len,
         )
