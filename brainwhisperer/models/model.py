@@ -137,3 +137,14 @@ class BrainWhisperer(nn.Module):
         W = self._unfold_width
         T_ctc = T // W
         return x[:, : T_ctc * W, :].reshape(B, T_ctc, W * D)
+
+    def unfreeze_whisper_decoder(self) -> None:
+        """Enable gradients for all Whisper decoder parameters.
+
+        Called by UnfreezeWhisperDecoder callback at a configured epoch.
+        With LoRA, only the adapter parameters would train by default.
+        Unfreezing allows to train the full base-model decoder as well.
+        """
+        for name, param in self.whisper.named_parameters():
+            if "decoder" in name:
+                param.requires_grad_(True)
