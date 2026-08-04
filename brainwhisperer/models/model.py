@@ -1,0 +1,130 @@
+import torch
+import torch.distributed.tensor
+from peft import LoraConfig, get_peft_model
+from torch import Tensor, nn
+from transformers import WhisperForConditionalGeneration
+
+from brainwhisperer.config.schema import BWModelConfig
+from brainwhisperer.data.batch import NeuralBatch
+from brainwhisperer.models.embedder import BWEmbedder
+from brainwhisperer.models.encoder import BWEncoder
+
+# Whisper beginning of sequence (BOS): <|en|> <|transcribe|> <|notimestamps|>
+# Forced at decoder steps 1, 2, 3 (after the implicit <|startoftranscript|>).
+_FORCED_DECODER_IDS = [[1, 50258], [2, 50358], [3, 50362]]
+
+_N_PHONE_CLASSES = 41  # CMU phoneme set used in CARD/Willet
+
+
+class BrainWhisperer(nn.Module):
+    """
+    Top-level model, receives neural signals and outputs transcribed text.
+    BrainWhisperer (BW) follows a modular design, composed of:
+        - one BWEmbedder per subject group, where embedding conv. weights are shared across all
+        embedders.
+        - a BWEncoder, introducing custom elements w.r.t the vanilla Whisper encoder
+        - a WhisperForConditionalGeneration, used unmodified except for LoRA on the decoder.
+
+    Usage: BrainWhisperer(cfg, num_days_per_embedder=[45, 24, ...])
+    forward() returns:
+        ce_loss:      scalar, cross-entropy from Whisper decoder
+        phone_logits: (B, T_ctc, 41)
+        char_logits:  (B, T_ctc, vocab_size)
+
+    generate() returns token ids (B, L).
+    """
+
+    def __init__(self, cfg: BWModelConfig, num_days_per_embedder: list[int]):
+        super().__init__()
+
+        assert len(num_days_per_embedder) == cfg.n_embedders, (
+            f"num_days_per_embedder has {len(num_days_per_embedder)} entries "
+            f"but cfg.n_embedders={cfg.n_embedders}"
+        )
+
+        # Embedders
+        self.embedders = nn.ModuleList(
+            [BWEmbedder(cfg.embedder, num_days) for num_days in num_days_per_embedder]
+        )
+        # Share conv weights across subjects
+        if cfg.n_embedders > 1:
+            for emb in self.embedders[1:]:
+                emb.conv1 = self.embedders[0].conv1
+                emb.conv2 = self.embedders[0].conv2
+
+        # Encoder
+        self.encoder = BWEncoder(cfg.encoder)
+        self._last_phoneme_layer = cfg.encoder.last_phoneme_layer
+
+        # Original Whisper decoder + LoRA
+        whisper = WhisperForConditionalGeneration.from_pretrained(cfg.whisper_name)
+        lora_cfg = LoraConfig(
+            r=cfg.lora.r,
+            lora_alpha=cfg.lora.alpha,
+            lora_dropout=cfg.lora.dropout,
+            target_modules=list(cfg.lora.target_modules),
+        )
+        self.whisper = get_peft_model(whisper, lora_cfg)
+
+        # CTC heads
+        # Unfold consecutive tokens into a single CTC frame (80 ms windows).
+        self._unfold_width = 4 // cfg.embedder.stride_2  # 2 when stride_2=2
+        d_model = cfg.embedder.d_model
+        ctc_in = d_model * self._unfold_width
+        vocab_size = whisper.config.vocab_size
+        self.phone_head = nn.Linear(ctc_in, _N_PHONE_CLASSES)
+        self.char_head = nn.Linear(ctc_in, vocab_size)
+
+        self._d_model = d_model
+
+    def forward(self, batch: NeuralBatch) -> dict:
+        embedded = self._embed(batch.signals, batch.sbj_idx, batch.day_idx)
+        enc_out = self.encoder(embedded)
+
+        whisper_out = self.whisper(
+            encoder_outputs=enc_out,
+            labels=batch.labels,
+        )
+
+        # Intermediate hidden state for CTC heads
+        intermediate = enc_out.hidden_states[self._last_phoneme_layer + 1]
+        phone_logits = self.phone_head(self._ctc_unfold(intermediate))
+        char_logits = self.char_head(self._ctc_unfold(intermediate))
+
+        return {
+            "ce_loss": whisper_out.loss,
+            "phone_logits": phone_logits,
+            "char_logits": char_logits,
+        }
+
+    def generate(self, batch: NeuralBatch, **kwargs) -> Tensor:
+        embedded = self._embed(batch.signals, batch.sbj_idx, batch.day_idx)
+        enc_out = self.encoder(embedded)
+        return self.whisper.generate(
+            encoder_outputs=enc_out,
+            forced_decoder_ids=_FORCED_DECODER_IDS,
+            **kwargs,
+        )
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _embed(self, signals: Tensor, sbj_idx: Tensor, day_idx: Tensor) -> Tensor:
+        """Route each sample in the batch to its subject-group embedder."""
+        B = signals.shape[0]
+        out = torch.empty(
+            B, 1500, self._d_model, device=signals.device, dtype=signals.dtype
+        )
+        for s, embedder in enumerate(self.embedders):
+            mask = sbj_idx == s
+            if mask.any():
+                out[mask] = embedder(signals[mask], day_idx[mask])
+        return out
+
+    def _ctc_unfold(self, x: Tensor) -> Tensor:
+        """(B, 1500, d_model) → (B, T_ctc, d_model * unfold_width)"""
+        B, T, D = x.shape
+        W = self._unfold_width
+        T_ctc = T // W
+        return x[:, : T_ctc * W, :].reshape(B, T_ctc, W * D)
