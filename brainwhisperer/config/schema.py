@@ -71,6 +71,7 @@ class BWTrainingConfig:
     ce_coeff: float = MISSING
     ctc_phone_coeff: float = MISSING
     ctc_char_coeff: float = MISSING
+    scheduler: str = MISSING  # "cosine" | "linear" | "sequential"
     seed: int = MISSING
 
 
