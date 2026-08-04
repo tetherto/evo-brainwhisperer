@@ -61,6 +61,14 @@ def _assert_batch_shapes(batch: NeuralBatch, name: str):
         f"[{name}] signal T < reported length for some samples"
     )
 
+    # All datasets carry phoneme labels — phone_seq must always be present.
+    assert batch.phone_seq is not None, f"[{name}] phone_seq missing"
+    assert batch.phone_seq_len is not None, f"[{name}] phone_seq_len missing"
+    assert batch.phone_seq.shape[0] == B, f"[{name}] phone_seq batch dim mismatch"
+    assert batch.phone_seq_len.shape == (B,), f"[{name}] phone_seq_len shape {batch.phone_seq_len.shape}"
+    assert batch.phone_seq.dtype == torch.long, f"[{name}] phone_seq dtype {batch.phone_seq.dtype}"
+    assert (batch.phone_seq_len > 0).all(), f"[{name}] zero-length phone sequences"
+
 
 def test_card_batch_shapes():
     batch = _one_batch("card")
