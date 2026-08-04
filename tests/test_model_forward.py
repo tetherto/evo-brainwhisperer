@@ -244,6 +244,17 @@ class TestBrainWhisperer:
         assert tokens.ndim == 2
         assert tokens.shape[0] == B
 
+    def test_encoder_only_skips_decoder(self, model):
+        # encoder_only=True must return CTC outputs but no ce_loss.
+        with torch.no_grad():
+            out = model(_batch(), encoder_only=True)
+        assert "ce_loss" not in out, "encoder_only must not return ce_loss"
+        assert "phone_logits" in out
+        assert "char_logits" in out
+        assert "x_len" in out
+        assert out["phone_logits"].shape == (B, T_CTC, 41)
+        assert out["x_len"].shape == (B,)
+
 
 # ---------------------------------------------------------------------------
 # BrainWhisperer — real CARD data  (requires .envrc env vars)
