@@ -78,14 +78,14 @@ class BrainWhisperer(nn.Module):
 
         self._d_model = d_model
 
-    def forward(self, batch: NeuralBatch) -> dict:
+    def forward(self, batch: NeuralBatch, encoder_only: bool = False) -> dict:
+        """
+        encoder_only=True: run embedder + BWEncoder + CTC heads only; skip the
+        Whisper decoder.  Used for Phase 2 of two-phase training where CE loss
+        is not needed and running the decoder would waste ~half the step cost.
+        """
         embedded = self._embed(batch.signals, batch.sbj_idx, batch.day_idx)
         enc_out = self.encoder(embedded)
-
-        whisper_out = self.whisper(
-            encoder_outputs=enc_out,
-            labels=batch.labels,
-        )
 
         # Intermediate hidden state for CTC heads
         intermediate = enc_out.hidden_states[self._last_phoneme_layer + 1]
@@ -99,6 +99,17 @@ class BrainWhisperer(nn.Module):
         )
         x_len = (x_len_emb // self._unfold_width).long()
 
+        if encoder_only:
+            return {
+                "phone_logits": phone_logits,
+                "char_logits": char_logits,
+                "x_len": x_len,
+            }
+
+        whisper_out = self.whisper(
+            encoder_outputs=enc_out,
+            labels=batch.labels,
+        )
         return {
             "ce_loss": whisper_out.loss,
             "phone_logits": phone_logits,
