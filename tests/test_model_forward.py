@@ -3,13 +3,17 @@ Phase 2 gate check — model layer.
 
 Run: pytest tests/test_model_forward.py -v
 
-All tests run on CPU with random synthetic data.
+Synthetic tests cover shape/dtype contracts without requiring data on disk.
+TestBrainWhispererRealData requires env vars (CARD_ROOT etc.) via .envrc.
 TestBrainWhisperer downloads openai/whisper-tiny.en (~150 MB) on first run.
 """
 
 import pytest
 import torch
+from torch.utils.data import DataLoader
+from transformers import WhisperTokenizer
 
+import brainwhisperer.data.datasets.card  # noqa: F401 — triggers @register_dataset
 from brainwhisperer.config.schema import (
     BWEmbedderConfig,
     BWEncoderConfig,
@@ -17,6 +21,8 @@ from brainwhisperer.config.schema import (
     BWModelConfig,
 )
 from brainwhisperer.data.batch import NeuralBatch
+from brainwhisperer.data.collate import NeuralCollator
+from brainwhisperer.data.registry import get_dataset
 from brainwhisperer.models.positional_encoding import PositionalEncoding
 from brainwhisperer.models.embedder import BWEmbedder
 from brainwhisperer.models.encoder import BWEncoder
@@ -206,6 +212,7 @@ class TestBrainWhisperer:
         assert "ce_loss" in out
         assert "phone_logits" in out
         assert "char_logits" in out
+        assert "x_len" in out
 
     def test_ce_loss_scalar(self, model):
         with torch.no_grad():
@@ -236,3 +243,98 @@ class TestBrainWhisperer:
             tokens = model.generate(_batch(), max_new_tokens=10)
         assert tokens.ndim == 2
         assert tokens.shape[0] == B
+
+
+# ---------------------------------------------------------------------------
+# BrainWhisperer — real CARD data  (requires .envrc env vars)
+# ---------------------------------------------------------------------------
+
+CARD_N_FEATURES = 512
+CARD_N_DAYS = 45
+CARD_BATCH_SIZE = 4
+
+
+@pytest.fixture(scope="module")
+def card_tokenizer():
+    return WhisperTokenizer.from_pretrained(
+        "openai/whisper-small", language="en", task="transcribe"
+    )
+
+
+@pytest.fixture(scope="module")
+def card_batch(card_tokenizer):
+    ds = get_dataset("card")(split="train")
+    loader = DataLoader(
+        ds,
+        batch_size=CARD_BATCH_SIZE,
+        collate_fn=NeuralCollator(card_tokenizer),
+        shuffle=False,
+    )
+    return next(iter(loader))
+
+
+@pytest.fixture(scope="module")
+def card_model():
+    cfg = BWModelConfig(
+        whisper_name="openai/whisper-tiny.en",
+        n_embedders=1,
+        embedder=BWEmbedderConfig(
+            num_features=CARD_N_FEATURES,
+            d_model=D_MODEL,
+            embed_type="conv",
+            kernel_size_1=7,
+            stride_2=STRIDE_2,
+            patch_size=5,
+            encodings="sin",
+            day_projections=True,
+            day_proj_rank=4,
+            dropout=0.0,
+        ),
+        encoder=_encoder_cfg(),
+        lora=BWLoRAConfig(r=4, alpha=8, dropout=0.0, target_modules=["q_proj", "v_proj"]),
+    )
+    m = BrainWhisperer(cfg, num_days_per_embedder=[CARD_N_DAYS])
+    m.eval()
+    return m
+
+
+class TestBrainWhispererRealData:
+    def test_forward_no_nan(self, card_model, card_batch):
+        with torch.no_grad():
+            out = card_model(card_batch)
+        assert not torch.isnan(out["ce_loss"]), "ce_loss is NaN on real data"
+        assert not torch.isnan(out["phone_logits"]).any(), "phone_logits has NaN"
+        assert not torch.isnan(out["char_logits"]).any(), "char_logits has NaN"
+
+    def test_forward_output_shapes(self, card_model, card_batch):
+        B = CARD_BATCH_SIZE
+        unfold_width = 4 // STRIDE_2
+        T_ctc = 1500 // unfold_width
+        with torch.no_grad():
+            out = card_model(card_batch)
+        assert out["ce_loss"].shape == ()
+        assert out["phone_logits"].shape == (B, T_ctc, 41)
+        assert out["char_logits"].shape[0] == B
+        assert out["char_logits"].shape[1] == T_ctc
+
+    def test_x_len_valid(self, card_model, card_batch):
+        """x_len must be in (0, T_ctc] for every sample and match batch.lengths."""
+        T_ctc = 1500 // (4 // STRIDE_2)
+        with torch.no_grad():
+            out = card_model(card_batch)
+        x_len = out["x_len"]
+        assert x_len.shape == (CARD_BATCH_SIZE,)
+        assert (x_len > 0).all(), "x_len must be positive for all samples"
+        assert (x_len <= T_ctc).all(), f"x_len must be <= T_ctc={T_ctc}"
+        # longer raw signals must produce longer or equal x_len
+        assert (x_len <= T_ctc).all()
+        lengths = card_batch.lengths
+        # monotone: sort by raw length, x_len must also be non-decreasing
+        sorted_idx = lengths.argsort()
+        assert (x_len[sorted_idx].diff() >= 0).all(), "x_len must be monotone w.r.t. raw lengths"
+
+    def test_generate_returns_tokens(self, card_model, card_batch):
+        with torch.no_grad():
+            tokens = card_model.generate(card_batch, max_new_tokens=10)
+        assert tokens.ndim == 2
+        assert tokens.shape[0] == CARD_BATCH_SIZE
