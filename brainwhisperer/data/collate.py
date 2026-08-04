@@ -44,9 +44,14 @@ class NeuralCollator:
             max_length=self.max_label_len,
         )
 
+        # Strip the leading BOS token and replace padding with -100,
+        # so that CrossEntropyLoss will ignore those positions.
+        labels = tok_out["input_ids"][:, 1:]
+        labels = labels.masked_fill(labels == self.tokenizer.pad_token_id, -100)
+
         return NeuralBatch(
             signals=neural_features.permute(0, 2, 1),  # (B, T_max, C) → (B, C, T_max)
-            labels=tok_out["input_ids"],
+            labels=labels,
             sbj_idx=sbj_idx,
             day_idx=day,
             lengths=neural_lengths,
