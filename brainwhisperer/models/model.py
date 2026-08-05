@@ -2,7 +2,7 @@ import torch
 import torch.distributed.tensor
 from peft import LoraConfig, get_peft_model
 from torch import Tensor, nn
-from transformers import WhisperForConditionalGeneration
+from transformers import WhisperConfig, WhisperForConditionalGeneration
 
 from brainwhisperer.config.schema import BWModelConfig
 from brainwhisperer.data.batch import NeuralBatch
@@ -57,7 +57,14 @@ class BrainWhisperer(nn.Module):
         self._last_phoneme_layer = cfg.encoder.last_phoneme_layer
 
         # Original Whisper decoder + LoRA
-        whisper = WhisperForConditionalGeneration.from_pretrained(cfg.whisper_name)
+        whisper_cfg = WhisperConfig.from_pretrained(cfg.whisper_name)
+        if cfg.whisper_dropout > 0.0:
+            whisper_cfg.dropout = cfg.whisper_dropout
+            whisper_cfg.activation_dropout = cfg.whisper_dropout
+            whisper_cfg.attention_dropout = cfg.whisper_dropout
+        whisper = WhisperForConditionalGeneration.from_pretrained(
+            cfg.whisper_name, config=whisper_cfg
+        )
         lora_cfg = LoraConfig(
             r=cfg.lora.r,
             lora_alpha=cfg.lora.alpha,
