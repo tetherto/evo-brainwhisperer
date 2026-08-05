@@ -55,10 +55,11 @@ class BWModelConfig:
 
 @dataclass
 class BWDataConfig:
-    datasets: list[str] = MISSING  # registered dataset names, e.g. [nejm, kunz]
+    datasets: list[str] = MISSING  # registered dataset names, e.g. [card, kunz_t12]
     batch_size: int = MISSING
     num_workers: int = MISSING
     max_seq_len: int = MISSING  # max token length for Whisper decoder
+    days_per_batch: int = MISSING  # distinct recording days per batch; batch_size must be divisible by this
 
 
 @dataclass
@@ -73,6 +74,7 @@ class BWTrainingConfig:
     ctc_char_coeff: float = MISSING
     scheduler: str = MISSING  # "cosine" | "linear" | "sequential"
     seed: int = MISSING
+    unfreeze_decoder_epoch: int = -1  # epoch at which to unfreeze Whisper decoder; -1 = never
 
 
 @dataclass
