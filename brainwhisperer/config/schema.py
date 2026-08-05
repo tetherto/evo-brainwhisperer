@@ -48,6 +48,7 @@ class BWLoRAConfig:
 class BWModelConfig:
     whisper_name: str = MISSING  # HuggingFace model id, e.g. openai/whisper-small
     n_embedders: int = MISSING  # must equal the number of subject groups in the dataset
+    whisper_dropout: float = 0.0  # 0.0 = pretrained default
     embedder: BWEmbedderConfig = field(default_factory=BWEmbedderConfig)
     encoder: BWEncoderConfig = field(default_factory=BWEncoderConfig)
     lora: BWLoRAConfig = field(default_factory=BWLoRAConfig)
@@ -74,7 +75,9 @@ class BWTrainingConfig:
     ctc_char_coeff: float = MISSING
     scheduler: str = MISSING  # "cosine" | "linear" | "sequential"
     seed: int = MISSING
-    unfreeze_decoder_epoch: int = -1  # epoch at which to unfreeze Whisper decoder; -1 = never
+    unfreeze_decoder_epoch: int = (
+        -1
+    )  # epoch at which to unfreeze Whisper decoder; -1 = never
     devices: int = 1  # GPUs per node; override to >1 only when launching via torchrun
 
 
