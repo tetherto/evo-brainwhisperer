@@ -4,9 +4,7 @@ import torch
 from torch.utils.data import ConcatDataset, DataLoader
 from transformers import WhisperTokenizer
 
-import brainwhisperer.data.datasets.card  # noqa: F401 — triggers @register_dataset
-import brainwhisperer.data.datasets.kunz  # noqa: F401
-import brainwhisperer.data.datasets.willett  # noqa: F401
+import brainwhisperer.data.datasets  # noqa: F401 - unused in this script but triggers dataset registration
 from brainwhisperer.data.batch import NeuralBatch
 from brainwhisperer.data.collate import NeuralCollator
 from brainwhisperer.data.registry import get_dataset

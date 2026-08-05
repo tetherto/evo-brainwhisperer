@@ -13,7 +13,7 @@ import torch
 from torch.utils.data import DataLoader
 from transformers import WhisperTokenizer
 
-import brainwhisperer.data.datasets.card  # noqa: F401 — triggers @register_dataset
+import brainwhisperer.data.datasets  # noqa: F401 - unused in this script but triggers dataset registration
 from brainwhisperer.config.schema import (
     BWEmbedderConfig,
     BWEncoderConfig,
@@ -23,10 +23,10 @@ from brainwhisperer.config.schema import (
 from brainwhisperer.data.batch import NeuralBatch
 from brainwhisperer.data.collate import NeuralCollator
 from brainwhisperer.data.registry import get_dataset
-from brainwhisperer.models.positional_encoding import PositionalEncoding
 from brainwhisperer.models.embedder import BWEmbedder
 from brainwhisperer.models.encoder import BWEncoder
 from brainwhisperer.models.model import BrainWhisperer
+from brainwhisperer.models.positional_encoding import PositionalEncoding
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -39,8 +39,8 @@ N_HEADS = 6
 B = 2
 T_SIGNAL = 3000
 STRIDE_2 = 2
-UNFOLD_WIDTH = 4 // STRIDE_2   # 2
-T_CTC = 1500 // UNFOLD_WIDTH   # 750
+UNFOLD_WIDTH = 4 // STRIDE_2  # 2
+T_CTC = 1500 // UNFOLD_WIDTH  # 750
 N_DAYS = 10
 
 
@@ -54,8 +54,8 @@ def _embedder_cfg(embed_type: str = "conv") -> BWEmbedderConfig:
         patch_size=5,
         encodings="sin",
         day_projections=True,
-        day_proj_rank=4,   # small rank for fast tests
-        dropout=0.0,       # deterministic forward
+        day_proj_rank=4,  # small rank for fast tests
+        dropout=0.0,  # deterministic forward
     )
 
 
@@ -78,7 +78,9 @@ def _model_cfg() -> BWModelConfig:
         n_embedders=1,
         embedder=_embedder_cfg(),
         encoder=_encoder_cfg(),
-        lora=BWLoRAConfig(r=4, alpha=8, dropout=0.0, target_modules=["q_proj", "v_proj"]),
+        lora=BWLoRAConfig(
+            r=4, alpha=8, dropout=0.0, target_modules=["q_proj", "v_proj"]
+        ),
     )
 
 
@@ -86,7 +88,7 @@ def _batch(n_embedders: int = 1) -> NeuralBatch:
     return NeuralBatch(
         signals=torch.randn(B, N_FEATURES, T_SIGNAL),
         labels=torch.randint(0, 200, (B, 10)),
-        sbj_idx=torch.zeros(B, dtype=torch.long),   # all from embedder 0
+        sbj_idx=torch.zeros(B, dtype=torch.long),  # all from embedder 0
         day_idx=torch.randint(0, N_DAYS, (B,)),
         lengths=torch.full((B,), T_SIGNAL, dtype=torch.long),
     )
@@ -95,6 +97,7 @@ def _batch(n_embedders: int = 1) -> NeuralBatch:
 # ---------------------------------------------------------------------------
 # PositionalEncoding
 # ---------------------------------------------------------------------------
+
 
 class TestPositionalEncoding:
     def test_output_shape(self):
@@ -127,10 +130,13 @@ class TestPositionalEncoding:
 # BWEmbedder
 # ---------------------------------------------------------------------------
 
+
 class TestBWEmbedder:
     def test_conv_output_shape(self):
         emb = BWEmbedder(_embedder_cfg("conv"), num_days=N_DAYS)
-        out = emb(torch.randn(B, N_FEATURES, T_SIGNAL), torch.zeros(B, dtype=torch.long))
+        out = emb(
+            torch.randn(B, N_FEATURES, T_SIGNAL), torch.zeros(B, dtype=torch.long)
+        )
         assert out.shape == (B, 1500, D_MODEL)
 
     def test_conv_short_signal_padded(self):
@@ -162,6 +168,7 @@ class TestBWEmbedder:
 # ---------------------------------------------------------------------------
 # BWEncoder
 # ---------------------------------------------------------------------------
+
 
 class TestBWEncoder:
     def test_output_last_hidden_state_shape(self):
@@ -197,6 +204,7 @@ class TestBWEncoder:
 # ---------------------------------------------------------------------------
 # BrainWhisperer  (downloads whisper-tiny.en on first run)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def model():
@@ -302,7 +310,9 @@ def card_model():
             dropout=0.0,
         ),
         encoder=_encoder_cfg(),
-        lora=BWLoRAConfig(r=4, alpha=8, dropout=0.0, target_modules=["q_proj", "v_proj"]),
+        lora=BWLoRAConfig(
+            r=4, alpha=8, dropout=0.0, target_modules=["q_proj", "v_proj"]
+        ),
     )
     m = BrainWhisperer(cfg, num_days_per_embedder=[CARD_N_DAYS])
     m.eval()
@@ -342,7 +352,9 @@ class TestBrainWhispererRealData:
         lengths = card_batch.lengths
         # monotone: sort by raw length, x_len must also be non-decreasing
         sorted_idx = lengths.argsort()
-        assert (x_len[sorted_idx].diff() >= 0).all(), "x_len must be monotone w.r.t. raw lengths"
+        assert (x_len[sorted_idx].diff() >= 0).all(), (
+            "x_len must be monotone w.r.t. raw lengths"
+        )
 
     def test_generate_returns_tokens(self, card_model, card_batch):
         with torch.no_grad():
