@@ -24,6 +24,7 @@ _SPLITS: dict[str, dict[str, str]] = {
 class KunzDataset(Dataset):
     SUBJECT: str   # set by subclasses
     NUM_DAYS: int  # set by subclasses
+    VAL_SPLIT: str = "val"
 
     def __init__(self, split: str = "train", sbj_idx: int = 0):
         splits = _SPLITS[self.SUBJECT]

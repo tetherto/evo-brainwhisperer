@@ -18,6 +18,7 @@ _SPLITS = {
 @register_dataset("willet")
 class WilletDataset(Dataset):
     NUM_DAYS: int = len(WILLETT_SESSIONS)
+    VAL_SPLIT: str = "test"  # Willet has no "val" split; use test for validation
 
     def __init__(self, split: str = "train", sbj_idx: int = 0):
         if split not in _SPLITS:

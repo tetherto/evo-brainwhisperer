@@ -17,6 +17,7 @@ _SPLITS = {
 @register_dataset("card")
 class CardDataset(Dataset):
     NUM_DAYS: int = len(CARD_SESSIONS)
+    VAL_SPLIT: str = "val"
 
     def __init__(self, split: str = "train", sbj_idx: int = 0):
         if split not in _SPLITS:
