@@ -75,6 +75,7 @@ class BWTrainingConfig:
     scheduler: str = MISSING  # "cosine" | "linear" | "sequential"
     seed: int = MISSING
     unfreeze_decoder_epoch: int = -1  # epoch at which to unfreeze Whisper decoder; -1 = never
+    devices: int = 1  # GPUs per node; override to >1 only when launching via torchrun
 
 
 @dataclass
