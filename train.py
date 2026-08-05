@@ -120,7 +120,7 @@ def main(cfg: DictConfig) -> None:
         )
 
     # ------------------------------------------------------------------
-    # Logger — CSVLogger by default. W&B set via experiment config
+    # Logger: CSVLogger by default. W&B set via experiment config
     # ------------------------------------------------------------------
     logger = CSVLogger(save_dir=str(run_dir), name="logs")
 
