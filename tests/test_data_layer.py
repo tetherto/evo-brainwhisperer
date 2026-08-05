@@ -19,9 +19,11 @@ TOKENIZER = WhisperTokenizer.from_pretrained(
 COLLATOR = NeuralCollator(TOKENIZER)
 
 
-def _one_batch(dataset_name: str, split: str = "train") -> NeuralBatch:
+def _one_batch(
+    dataset_name: str, split: str = "train", sbj_idx: int = 0
+) -> NeuralBatch:
     cls = get_dataset(dataset_name)
-    ds = cls(split=split)
+    ds = cls(split=split, sbj_idx=sbj_idx)
     loader = DataLoader(ds, batch_size=BATCH_SIZE, collate_fn=COLLATOR, shuffle=True)
     return next(iter(loader))
 
@@ -65,33 +67,40 @@ def _assert_batch_shapes(batch: NeuralBatch, name: str):
     assert batch.phone_seq is not None, f"[{name}] phone_seq missing"
     assert batch.phone_seq_len is not None, f"[{name}] phone_seq_len missing"
     assert batch.phone_seq.shape[0] == B, f"[{name}] phone_seq batch dim mismatch"
-    assert batch.phone_seq_len.shape == (B,), f"[{name}] phone_seq_len shape {batch.phone_seq_len.shape}"
-    assert batch.phone_seq.dtype == torch.long, f"[{name}] phone_seq dtype {batch.phone_seq.dtype}"
+    assert batch.phone_seq_len.shape == (B,), (
+        f"[{name}] phone_seq_len shape {batch.phone_seq_len.shape}"
+    )
+    assert batch.phone_seq.dtype == torch.long, (
+        f"[{name}] phone_seq dtype {batch.phone_seq.dtype}"
+    )
     assert (batch.phone_seq_len > 0).all(), f"[{name}] zero-length phone sequences"
 
 
+# NOTE: we're injecting the same number (42) to test that there's no constant being
+# injected from the dataclasses (e.g., 0,1,2,3). This is to make sure that the number
+# assigned at initalization is respected in the batch.
 def test_card_batch_shapes():
-    batch = _one_batch("card")
+    batch = _one_batch("card", sbj_idx=42)
     _assert_batch_shapes(batch, "card")
-    assert (batch.sbj_idx == 0).all(), "Card sbj_idx must be 0"
+    assert (batch.sbj_idx == 42).all(), "Card sbj_idx must equal the injected value"
 
 
 def test_willet_batch_shapes():
-    batch = _one_batch("willet")
+    batch = _one_batch("willet", sbj_idx=42)
     _assert_batch_shapes(batch, "willet")
-    assert (batch.sbj_idx == 1).all(), "Willet sbj_idx must be 1"
+    assert (batch.sbj_idx == 42).all(), "Willet sbj_idx must equal the injected value"
 
 
 def test_kunz_t12_batch_shapes():
-    batch = _one_batch("kunz_t12")
+    batch = _one_batch("kunz_t12", sbj_idx=42)
     _assert_batch_shapes(batch, "kunz_t12")
-    assert (batch.sbj_idx == 2).all(), "Kunz T12 sbj_idx must be 2"
+    assert (batch.sbj_idx == 42).all(), "Kunz T12 sbj_idx must equal the injected value"
 
 
 def test_kunz_t15_batch_shapes():
-    batch = _one_batch("kunz_t15")
+    batch = _one_batch("kunz_t15", sbj_idx=42)
     _assert_batch_shapes(batch, "kunz_t15")
-    assert (batch.sbj_idx == 3).all(), "Kunz T15 sbj_idx must be 3"
+    assert (batch.sbj_idx == 42).all(), "Kunz T15 sbj_idx must equal the injected value"
 
 
 def test_sampler_structure():
