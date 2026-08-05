@@ -1,6 +1,7 @@
 defaults:
   - base_config
   - _self_
+  - optional experiment: null
 
 model:
   whisper_name: openai/whisper-tiny.en
