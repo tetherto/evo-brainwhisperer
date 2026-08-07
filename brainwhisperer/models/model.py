@@ -123,8 +123,6 @@ class BrainWhisperer(nn.Module):
     def generate(self, batch: NeuralBatch, **kwargs) -> Tensor:
         embedded = self._embed(batch.signals, batch.sbj_idx, batch.day_idx)
         enc_out = self.encoder(embedded)
-        # whisper-tiny.en supplies its own decoder prompt via generation_config;
-        # forcing multilingual language/task tokens corrupts free generation.
         return self.whisper.generate(encoder_outputs=enc_out, **kwargs)
 
     # ------------------------------------------------------------------
