@@ -9,10 +9,6 @@ from brainwhisperer.data.batch import NeuralBatch
 from brainwhisperer.models.embedder import _MAX_SOURCE_POSITIONS, BWEmbedder
 from brainwhisperer.models.encoder import BWEncoder
 
-# Whisper beginning of sequence (BOS): <|en|> <|transcribe|> <|notimestamps|>
-# Forced at decoder steps 1, 2, 3 (after the implicit <|startoftranscript|>).
-_FORCED_DECODER_IDS = [[1, 50258], [2, 50358], [3, 50362]]
-
 _N_PHONE_CLASSES = 41  # CMU phoneme set used in CARD/Willet
 
 
@@ -127,11 +123,9 @@ class BrainWhisperer(nn.Module):
     def generate(self, batch: NeuralBatch, **kwargs) -> Tensor:
         embedded = self._embed(batch.signals, batch.sbj_idx, batch.day_idx)
         enc_out = self.encoder(embedded)
-        return self.whisper.generate(
-            encoder_outputs=enc_out,
-            forced_decoder_ids=_FORCED_DECODER_IDS,
-            **kwargs,
-        )
+        # whisper-tiny.en supplies its own decoder prompt via generation_config;
+        # forcing multilingual language/task tokens corrupts free generation.
+        return self.whisper.generate(encoder_outputs=enc_out, **kwargs)
 
     # ------------------------------------------------------------------
     # Helpers
