@@ -46,8 +46,11 @@ class NeuralCollator:
 
         # Strip the leading BOS token and replace padding with -100,
         # so that CrossEntropyLoss will ignore those positions.
+        # Pad token and EOS IDs are equal in Whisper, so masking
+        # needs to be done via the attention mask to keep the trailing EOS the decoder must learn to emit.
         labels = tok_out["input_ids"][:, 1:]
-        labels = labels.masked_fill(labels == self.tokenizer.pad_token_id, -100)
+        pad_mask = tok_out["attention_mask"][:, 1:] == 0
+        labels = labels.masked_fill(pad_mask, -100)
 
         # Collate phoneme targets if every sample in the batch provides them.
         phone_seq = phone_seq_len = None
