@@ -64,6 +64,19 @@ class BWDataConfig:
 
 
 @dataclass
+class BWAugmentationConfig:
+    gain_std: float = MISSING  # static cross-channel gain warp; 0.0 disables
+    noise_std: float = MISSING  # white noise
+    offset_std: float = MISSING  # per-channel constant offset
+    walk_std: float = MISSING  # random walk along time; 0.0 disables
+    max_cut: int = MISSING  # max frames cut from signal start
+    smooth_kernel_size: int = MISSING
+    smooth_sigma: float = MISSING
+    num_masks: int = MISSING  # SpecAugment time masks per sample
+    max_mask_pct: float = MISSING  # max mask width as fraction of valid length
+
+
+@dataclass
 class BWTrainingConfig:
     max_epochs: int = MISSING
     lr: float = MISSING
@@ -79,6 +92,7 @@ class BWTrainingConfig:
         -1
     )  # epoch at which to unfreeze Whisper decoder; -1 = never
     devices: int = 1  # GPUs per node; override to >1 only when launching via torchrun
+    augmentation: BWAugmentationConfig = field(default_factory=BWAugmentationConfig)
 
 
 @dataclass

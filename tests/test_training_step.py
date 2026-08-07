@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader
 from transformers import WhisperTokenizer
 
 from brainwhisperer.config.schema import (
+    BWAugmentationConfig,
     BWEmbedderConfig,
     BWEncoderConfig,
     BWLoRAConfig,
@@ -94,6 +95,17 @@ def lightning_module(tokenizer):
         ctc_char_coeff=0.0,
         scheduler="cosine",
         seed=42,
+        augmentation=BWAugmentationConfig(
+            gain_std=0.0,
+            noise_std=1.0,
+            offset_std=0.2,
+            walk_std=0.0,
+            max_cut=3,
+            smooth_kernel_size=100,
+            smooth_sigma=2.0,
+            num_masks=10,
+            max_mask_pct=0.075,
+        ),
     )
     model = BrainWhisperer(model_cfg, num_days_per_embedder=[num_days])
     lm = BWLightningModule(model, training_cfg, tokenizer, val_dataloader_names=["card"])

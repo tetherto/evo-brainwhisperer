@@ -52,6 +52,19 @@ class BWLightningModule(LightningModule):
         self._tokenizer = tokenizer
         self._val_names = val_dataloader_names
 
+        a = cfg.augmentation
+        self._aug = {
+            "gain_std": a.gain_std,
+            "noise_std": a.noise_std,
+            "offset_std": a.offset_std,
+            "walk_std": a.walk_std,
+            "max_cut": a.max_cut,
+            "smooth_kernel_size": a.smooth_kernel_size,
+            "smooth_sigma": a.smooth_sigma,
+            "num_masks": a.num_masks,
+            "max_mask_pct": a.max_mask_pct,
+        }
+
         self._normalizer = BasicTextNormalizer()
         self._wer = WordErrorRate()
 
@@ -166,7 +179,9 @@ class BWLightningModule(LightningModule):
 
     def training_step(self, batch: NeuralBatch, batch_idx: int):
         # CE loss on clean (smoothed-only) signal
-        x_clean, len_clean = transform_data(batch.signals, batch.lengths, mode="val")
+        x_clean, len_clean = transform_data(
+            batch.signals, batch.lengths, mode="val", **self._aug
+        )
         clean_batch = NeuralBatch(
             signals=x_clean,
             labels=batch.labels,
@@ -187,7 +202,9 @@ class BWLightningModule(LightningModule):
         loss = self.cfg.ce_coeff * ce_loss
 
         # CTC loss on augmented + masked signal
-        x_aug, len_aug = transform_data(batch.signals, batch.lengths, mode="train")
+        x_aug, len_aug = transform_data(
+            batch.signals, batch.lengths, mode="train", **self._aug
+        )
         aug_batch = NeuralBatch(
             signals=x_aug,
             labels=batch.labels,
@@ -235,7 +252,9 @@ class BWLightningModule(LightningModule):
     def validation_step(
         self, batch: NeuralBatch, batch_idx: int, dataloader_idx: int = 0
     ):
-        x_val, len_val = transform_data(batch.signals, batch.lengths, mode="val")
+        x_val, len_val = transform_data(
+            batch.signals, batch.lengths, mode="val", **self._aug
+        )
         val_batch = NeuralBatch(
             signals=x_val,
             labels=batch.labels,
