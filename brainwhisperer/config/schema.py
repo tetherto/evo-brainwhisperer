@@ -57,10 +57,10 @@ class BWModelConfig:
 @dataclass
 class BWDataConfig:
     datasets: list[str] = MISSING  # registered dataset names, e.g. [card, kunz_t12]
-    batch_size: int = MISSING
+    batch_size: int = MISSING  # global batch size across all GPUs; per-rank = batch_size // world_size
     num_workers: int = MISSING
     max_seq_len: int = MISSING  # max token length for Whisper decoder
-    days_per_batch: int = MISSING  # distinct recording days per batch; batch_size must be divisible by this
+    days_per_batch: int = MISSING  # distinct recording days per batch; per-rank batch_size must be divisible by this
 
 
 @dataclass
@@ -92,6 +92,7 @@ class BWTrainingConfig:
         -1
     )  # epoch at which to unfreeze Whisper decoder; -1 = never
     devices: int = 1  # GPUs per node; override to >1 only when launching via torchrun
+    matmul_precision: str = MISSING
     augmentation: BWAugmentationConfig = field(default_factory=BWAugmentationConfig)
 
 
@@ -102,10 +103,27 @@ class BWVizConfig:
 
 
 @dataclass
+class BWGenerationConfig:
+    """
+    Beam search kwargs passed to BrainWhisperer.generate() at eval time.
+    Training validation uses greedy decoding (no kwargs) for speed; eval.py
+    uses this config to reproduce reported numbers.
+    """
+
+    num_beams: int = MISSING
+    num_beam_groups: int = MISSING  # diversity-promoting Group Beam Search
+    length_penalty: float = MISSING
+    repetition_penalty: float = MISSING
+    no_repeat_ngram_size: int = MISSING
+    diversity_penalty: float = MISSING
+
+
+@dataclass
 class BWConfig:
     model: BWModelConfig = field(default_factory=BWModelConfig)
     data: BWDataConfig = field(default_factory=BWDataConfig)
     training: BWTrainingConfig = field(default_factory=BWTrainingConfig)
+    generation: BWGenerationConfig = field(default_factory=BWGenerationConfig)
     viz: BWVizConfig = field(default_factory=BWVizConfig)
 
 
