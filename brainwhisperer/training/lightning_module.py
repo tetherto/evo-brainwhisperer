@@ -104,7 +104,10 @@ class BWLightningModule(LightningModule):
             {
                 # Whisper decoder + LoRA adapter.  LR is hardcoded 1e-4 per the
                 # original pl_wrapper (marked TODO there, preserved here as-is).
-                "params": self.model.whisper.parameters(),
+                # Excluding frozen params (whisper.model.encoder) to avoid errors on multi-GPU.
+                "params": [
+                    p for p in self.model.whisper.parameters() if p.requires_grad
+                ],
                 "lr": 1e-4,
                 "weight_decay": self.cfg.weight_decay,
             },
@@ -272,7 +275,11 @@ class BWLightningModule(LightningModule):
 
         ce_loss = out["ce_loss"]
         self.log(
-            f"val_ce_loss_{name}", ce_loss, prog_bar=False, add_dataloader_idx=False
+            f"val_ce_loss_{name}",
+            ce_loss,
+            prog_bar=False,
+            add_dataloader_idx=False,
+            sync_dist=True,  # Average across distributed devices
         )
 
         if self.cfg.ctc_phone_coeff > 0.0 and batch.phone_seq is not None:
@@ -287,6 +294,7 @@ class BWLightningModule(LightningModule):
                 phone_loss,
                 prog_bar=False,
                 add_dataloader_idx=False,
+                sync_dist=True,
             )
             self._accumulate_per(
                 out["phone_logits"],
@@ -308,15 +316,17 @@ class BWLightningModule(LightningModule):
 
     def on_validation_epoch_end(self):
         for i, name in enumerate(self._val_names):
+            # All ranks see the full validation set,no gather or all_reduce needed.
+            # sync_dist=True averages identical values. No-op silencing warnings.
             hyps = [self._normalizer(t) for t in self._val_hyps[i]]
             refs = [self._normalizer(t) for t in self._val_refs[i]]
             if hyps and refs:
                 wer = self._wer(hyps, refs)
-                self.log(f"val_wer_{name}", wer, prog_bar=(i == 0))
+                self.log(f"val_wer_{name}", wer, prog_bar=(i == 0), sync_dist=True)
 
             if self._val_len_phones[i] > 0:
                 per = self._val_edit_phones[i] / self._val_len_phones[i]
-                self.log(f"val_per_{name}", per, prog_bar=(i == 0))
+                self.log(f"val_per_{name}", per, prog_bar=(i == 0), sync_dist=True)
 
             # Reset accumulators
             self._val_hyps[i].clear()

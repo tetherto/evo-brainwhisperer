@@ -1,4 +1,3 @@
-import os
 import random
 
 import torch
@@ -14,9 +13,6 @@ class StratifiedDayBatchSampler(Sampler):
     Grouping is by sbj_idx (the model's routing key) rather than source_dataset
     string, so subject groups that share the same source string (e.g. NEJM and
     Kunz both report "card") are kept strictly separate.
-
-    Multi-GPU: LOCAL_RANK offsets the seed so each rank produces a disjoint
-    sequence of batches.
     """
 
     def __init__(
@@ -24,22 +20,23 @@ class StratifiedDayBatchSampler(Sampler):
         dataset,
         batch_size: int,
         days_per_batch: int,
-        num_processes: int = 1,
+        rank: int = 0,
+        world_size: int = 1,  # number of devices for DDP
         seed: int = 1,
     ):
         assert batch_size % days_per_batch == 0, (
             f"batch_size ({batch_size}) must be divisible by days_per_batch ({days_per_batch})"
         )
 
-        rank_seed = seed + int(os.environ.get("LOCAL_RANK", 0))
+        self.rank = rank
+        self.world_size = world_size
         self.days_per_batch = days_per_batch
         self.samples_per_day = batch_size // days_per_batch
-        self.trng = torch.Generator().manual_seed(rank_seed)
-        self.rng = random.Random(rank_seed)
+        # Ensuring same seed on every rank for multi-device training
+        self.trng = torch.Generator().manual_seed(seed)
+        self.rng = random.Random(seed)
 
-        # sbj_idx (int) → total sample count
         self.num_samples_per_sbj: dict[int, int] = {}
-        # sbj_idx → day → [global dataset indices]
         self.day_to_indices: dict[int, dict[int, list[int]]] = {}
 
         for idx, sample in enumerate(dataset):
@@ -51,17 +48,18 @@ class StratifiedDayBatchSampler(Sampler):
 
         total = len(dataset)
         self.sbj_ids = list(self.num_samples_per_sbj.keys())
-        self.sbj_probs = {
-            sbj: n / total for sbj, n in self.num_samples_per_sbj.items()
-        }
+        self.sbj_probs = {sbj: n / total for sbj, n in self.num_samples_per_sbj.items()}
         self.days = {
             sbj: list(days.keys()) for sbj, days in self.day_to_indices.items()
         }
-        self.num_batches = (total // batch_size) // num_processes
+        # Total batches this rank yields. Splitting batch size across devices
+        total_batches = total // batch_size
+        self.num_batches = total_batches // world_size
+        self._total_to_generate = self.num_batches * world_size
 
     def __iter__(self):
         probs = torch.tensor([self.sbj_probs[s] for s in self.sbj_ids])
-        for _ in range(self.num_batches):
+        for global_idx in range(self._total_to_generate):
             batch: list[int] = []
             sbj_sample_ids = torch.multinomial(
                 probs,
@@ -77,7 +75,9 @@ class StratifiedDayBatchSampler(Sampler):
                         self.day_to_indices[sbj][day], k=self.samples_per_day
                     )
                     batch.extend(indices)
-            yield batch
+            # Only yield batches assigned to this rank.
+            if global_idx % self.world_size == self.rank:
+                yield batch
 
     def __len__(self) -> int:
         return self.num_batches

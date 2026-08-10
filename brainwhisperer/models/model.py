@@ -68,6 +68,9 @@ class BrainWhisperer(nn.Module):
             target_modules=list(cfg.lora.target_modules),
         )
         self.whisper = get_peft_model(whisper, lora_cfg)
+        # Whisper's built-in encoder is always bypassed, since the model uses BWEncoder.
+        # Distirbuted trainign requires explicitly turning off the gradients to avoid errors.
+        self.whisper.model.model.encoder.requires_grad_(False)
 
         # CTC heads
         # Unfold consecutive tokens into a single CTC frame (80 ms windows).
