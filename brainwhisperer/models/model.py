@@ -30,7 +30,12 @@ class BrainWhisperer(nn.Module):
     generate() returns token ids (B, L).
     """
 
-    def __init__(self, cfg: BWModelConfig, num_days_per_embedder: list[int]):
+    def __init__(
+        self,
+        cfg: BWModelConfig,
+        num_days_per_embedder: list[int],
+        calendar_days_per_embedder: list[list[int]] | None = None,
+    ):
         super().__init__()
 
         assert len(num_days_per_embedder) == cfg.n_embedders, (
@@ -38,9 +43,26 @@ class BrainWhisperer(nn.Module):
             f"but cfg.n_embedders={cfg.n_embedders}"
         )
 
-        # Embedders
+        # Derive calendar-based month grouping from the acquisition dates.
+        cal_days_list = (
+            calendar_days_per_embedder
+            if calendar_days_per_embedder is not None
+            else [None] * len(num_days_per_embedder)
+        )
         self.embedders = nn.ModuleList(
-            [BWEmbedder(cfg.embedder, num_days) for num_days in num_days_per_embedder]
+            [
+                BWEmbedder(
+                    cfg.embedder,
+                    num_days,
+                    session_to_month=(
+                        [d // 30 for d in cal_days] if cal_days is not None else None
+                    ),
+                    session_to_calendar_day=(
+                        cal_days if cfg.embedder.encodings == "sin" else None
+                    ),
+                )
+                for num_days, cal_days in zip(num_days_per_embedder, cal_days_list)
+            ]
         )
         # Share conv weights across subjects
         if cfg.n_embedders > 1:
