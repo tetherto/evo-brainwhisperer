@@ -1,10 +1,13 @@
+import os
 from pathlib import Path
 
 import hydra
 import lightning as pl
+import torch
 from hydra.core.hydra_config import HydraConfig
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger
+from lightning.pytorch.strategies import DDPStrategy
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import ConcatDataset, DataLoader
 from transformers import WhisperTokenizer
@@ -17,6 +20,7 @@ from brainwhisperer.data.samplers import StratifiedDayBatchSampler
 from brainwhisperer.models.model import BrainWhisperer
 from brainwhisperer.training.callbacks import UnfreezeWhisperDecoder, VizCallback
 from brainwhisperer.training.lightning_module import BWLightningModule
+from brainwhisperer.utils.sessions import SESSIONS_BY_DATASET, sessions_to_calendar_days
 
 
 @hydra.main(config_path="brainwhisperer/config", config_name="base", version_base="1.3")
@@ -25,10 +29,19 @@ def main(cfg: DictConfig) -> None:
 
     run_dir = Path(HydraConfig.get().runtime.output_dir)
 
-    # ------------------------------------------------------------------
-    # Reproducibility
-    # ------------------------------------------------------------------
+    torch.set_float32_matmul_precision(cfg.training.matmul_precision)
+
+    # Seeting seed for reproducibility
     pl.seed_everything(cfg.training.seed, workers=True)
+
+    # Set RANK and WORLD_SIZE for torchrun; default to 0 and 1 for single-GPU
+    _rank = int(os.environ.get("RANK", 0))
+    _world_size = int(os.environ.get("WORLD_SIZE", 1))
+
+    assert cfg.data.batch_size % _world_size == 0, (
+        f"Batch size ({cfg.data.batch_size}) must be divisible by world size ({_world_size})"
+    )
+    _per_rank_batch = cfg.data.batch_size // _world_size
 
     # Validate dataset and embedder counts match
     assert len(cfg.data.datasets) == cfg.model.n_embedders, (
@@ -54,6 +67,10 @@ def main(cfg: DictConfig) -> None:
     # ------------------------------------------------------------------
     dataset_classes = [get_dataset(name) for name in cfg.data.datasets]
     num_days_per_embedder = [cls.NUM_DAYS for cls in dataset_classes]
+    calendar_days_per_embedder = [
+        sessions_to_calendar_days(SESSIONS_BY_DATASET[name])
+        for name in cfg.data.datasets
+    ]
     val_names = list(cfg.data.datasets)
 
     train_datasets, val_dataloaders = [], []
@@ -63,7 +80,7 @@ def main(cfg: DictConfig) -> None:
         val_dataloaders.append(
             DataLoader(
                 val_ds,
-                batch_size=cfg.data.batch_size,
+                batch_size=_per_rank_batch,
                 collate_fn=collator,
                 num_workers=cfg.data.num_workers,
                 shuffle=False,
@@ -76,8 +93,10 @@ def main(cfg: DictConfig) -> None:
     train_combined = ConcatDataset(train_datasets)
     train_sampler = StratifiedDayBatchSampler(
         train_combined,
-        batch_size=cfg.data.batch_size,
+        batch_size=_per_rank_batch,
         days_per_batch=cfg.data.days_per_batch,
+        rank=_rank,
+        world_size=_world_size,
         seed=cfg.training.seed,
     )
     train_dl = DataLoader(
@@ -90,7 +109,7 @@ def main(cfg: DictConfig) -> None:
     # ------------------------------------------------------------------
     # Model + Lightning wrapper
     # ------------------------------------------------------------------
-    model = BrainWhisperer(cfg.model, num_days_per_embedder)
+    model = BrainWhisperer(cfg.model, num_days_per_embedder, calendar_days_per_embedder)
     lm = BWLightningModule(model, cfg.training, tokenizer, val_names)
 
     # ------------------------------------------------------------------
@@ -135,7 +154,13 @@ def main(cfg: DictConfig) -> None:
     trainer = pl.Trainer(
         max_epochs=cfg.training.max_epochs,
         gradient_clip_val=cfg.training.gradient_clip_val,
-        devices=cfg.training.devices,
+        # Detects if single or multi-GPU
+        devices=_world_size if _world_size > 1 else cfg.training.devices,
+        # Avoids DDP errors for unused params
+        strategy=DDPStrategy(static_graph=True) if _world_size > 1 else "auto",
+        # Using the custom StratifiedDayBatchSampler forces a workaround;
+        # all ranks run the full validation set, redundant but correct.
+        use_distributed_sampler=False,
         callbacks=callbacks,
         logger=logger,
         log_every_n_steps=1,
