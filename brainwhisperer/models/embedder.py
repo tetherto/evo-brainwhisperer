@@ -35,6 +35,7 @@ class BWEmbedder(nn.Module):
         cfg: BWEmbedderConfig,
         num_days: int,
         session_to_month: list[int] | None = None,
+        session_to_calendar_day: list[int] | None = None,
     ):
         super().__init__()
         self.embed_type = cfg.embed_type
@@ -80,6 +81,15 @@ class BWEmbedder(nn.Module):
                 self.proj_b_day = nn.Parameter(torch.zeros(num_days, C))
 
         self.proj_dropout = nn.Dropout(cfg.dropout)
+
+        # Buffer for sinusoidal day encoding so that PE amplitude
+        # reflects actual temporal spacing between recordings.
+        self.register_buffer(
+            "session_to_calendar_day",
+            torch.tensor(session_to_calendar_day, dtype=torch.long)
+            if session_to_calendar_day is not None
+            else None,
+        )
 
         # Signal tokenisation
         if cfg.embed_type == "conv":
@@ -197,7 +207,12 @@ class BWEmbedder(nn.Module):
     # ------------------------------------------------------------------
 
     def _add_day_encoding(self, x: Tensor, day_idx: Tensor) -> Tensor:
-        day_enc = self.day_encoding(day_idx)  # (B, d_model//2)
+        positions = (
+            self.session_to_calendar_day[day_idx]
+            if self.session_to_calendar_day is not None
+            else day_idx
+        )
+        day_enc = self.day_encoding(positions)  # (B, d_model//2)
         half = self.d_model // 2
         left = x[:, :, :half] + day_enc.unsqueeze(1)  # session encoding on first half
         right = x[:, :, half:]  # the encoder applies temporal encoding on this half
