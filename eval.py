@@ -7,7 +7,6 @@ import torch
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 from transformers import WhisperTokenizer
-from transformers.models.whisper.english_normalizer import BasicTextNormalizer
 
 import brainwhisperer.config.schema
 import brainwhisperer.data.datasets  # noqa: F401 - unused in this script but triggers dataset registration
@@ -22,6 +21,8 @@ from brainwhisperer.utils.metrics import (
     phoneme_error_rate,
     word_error_rate,
 )
+from brainwhisperer.utils.sessions import SESSIONS_BY_DATASET, sessions_to_calendar_days
+from brainwhisperer.utils.text import build_normalizer
 
 
 def _ctc_decode_phones(
@@ -71,6 +72,17 @@ def main() -> None:
     batch_size = args.batch_size or cfg.data.batch_size
     device = torch.device(args.device)
 
+    # Generation kwargs: diverse beam search params from the paper's Appendix C sweep.
+    # Forwarded verbatim to BrainWhisperer.generate() → whisper.generate().
+    gen_kwargs = dict(OmegaConf.to_container(cfg.generation, resolve=True))
+
+    # Augmentation kwargs for val-mode preprocessing (smoothing only).
+    aug = cfg.training.augmentation
+    aug_kwargs = {
+        "smooth_kernel_size": aug.smooth_kernel_size,
+        "smooth_sigma": aug.smooth_sigma,
+    }
+
     # ------------------------------------------------------------------
     # Tokenizer + collator
     # ------------------------------------------------------------------
@@ -78,13 +90,17 @@ def main() -> None:
         cfg.model.whisper_name, language="en", task="transcribe"
     )
     collator = NeuralCollator(tokenizer, max_label_len=cfg.data.max_seq_len)
-    normalizer = BasicTextNormalizer()
+    normalizer = build_normalizer()
 
     # ------------------------------------------------------------------
     # Validation datasets (same `sbj_idx` assignment as training)
     # ------------------------------------------------------------------
     dataset_classes = [get_dataset(name) for name in cfg.data.datasets]
     num_days_per_embedder = [cls.NUM_DAYS for cls in dataset_classes]
+    calendar_days_per_embedder = [
+        sessions_to_calendar_days(SESSIONS_BY_DATASET[name])
+        for name in cfg.data.datasets
+    ]
     val_names = list(cfg.data.datasets)
 
     val_loaders = []
@@ -103,7 +119,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Model
     # ------------------------------------------------------------------
-    model = BrainWhisperer(cfg.model, num_days_per_embedder)
+    model = BrainWhisperer(cfg.model, num_days_per_embedder, calendar_days_per_embedder)
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
     # Lightning stores submodule weights under "model.*" (self.model = BrainWhisperer)
     state = {
@@ -143,7 +159,7 @@ def main() -> None:
                 )
 
                 x_val, len_val = transform_data(
-                    batch.signals, batch.lengths, mode="val"
+                    batch.signals, batch.lengths, mode="val", **aug_kwargs
                 )
                 val_batch = NeuralBatch(
                     signals=x_val,
@@ -155,8 +171,8 @@ def main() -> None:
                     phone_seq_len=batch.phone_seq_len,
                 )
 
-                # WER: free generation, not teacher-forced
-                generated_ids = model.generate(val_batch)
+                # WER: free generation with beam search.
+                generated_ids = model.generate(val_batch, **gen_kwargs)
                 transcriptions = tokenizer.batch_decode(
                     generated_ids, skip_special_tokens=True
                 )
