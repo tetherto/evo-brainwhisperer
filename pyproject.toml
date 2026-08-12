@@ -11,5 +11,9 @@ requires-python = ">=3.10"
 where = ["."]
 include = ["brainwhisperer*"]
 
+# Ship the Whisper spelling map with the package.
+[tool.setuptools.package-data]
+"brainwhisperer.utils" = ["english.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
