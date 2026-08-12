@@ -36,7 +36,8 @@ class BWEncoder(nn.Module):
             encoder_attention_heads=cfg.n_heads,
             encoder_ffn_dim=cfg.d_ff,
             dropout=cfg.dropout,
-            attention_dropout=0.0,
+            attention_dropout=cfg.dropout,
+            activation_dropout=cfg.dropout,
             activation_function="gelu",
         )
         self.layers = nn.ModuleList(
@@ -69,7 +70,7 @@ class BWEncoder(nn.Module):
 
         all_hidden = (x,)
         for i, layer in enumerate(self.layers):
-            mask = windowed_mask if i < self.last_phoneme_layer else None
+            mask = windowed_mask if i <= self.last_phoneme_layer else None
             x = layer(x, attention_mask=mask, layer_head_mask=None)[0]
             all_hidden = all_hidden + (x,)
 
