@@ -1,3 +1,5 @@
+from datetime import datetime
+
 # Helper constants holding the number of recording days per dataset
 
 CARD_SESSIONS = [
@@ -94,3 +96,22 @@ KUNZ_T15_SESSIONS = [
 
 def session_to_day(sessions: list[str]) -> dict[str, int]:
     return {s: i for i, s in enumerate(sessions)}
+
+
+def sessions_to_calendar_days(sessions: list[str]) -> list[int]:
+    """Convert session name strings to days elapsed since the first session."""
+
+    def _parse(s: str) -> datetime:
+        return datetime.strptime(s[-10:], "%Y.%m.%d")
+
+    dates = [_parse(s) for s in sessions]
+    first = min(dates)
+    return [(d - first).days for d in dates]
+
+
+SESSIONS_BY_DATASET: dict[str, list[str]] = {
+    "card": CARD_SESSIONS,
+    "willet": WILLETT_SESSIONS,
+    "kunz_t12": KUNZ_T12_SESSIONS,
+    "kunz_t15": KUNZ_T15_SESSIONS,
+}
