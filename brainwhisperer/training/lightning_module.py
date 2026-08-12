@@ -13,13 +13,13 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torchaudio.functional import edit_distance as _edit_distance
 from torchmetrics.text import WordErrorRate
 from transformers import PreTrainedTokenizer
-from transformers.models.whisper.english_normalizer import BasicTextNormalizer
 
 from brainwhisperer.config.schema import BWTrainingConfig
 from brainwhisperer.data.augmentations import transform_data
 from brainwhisperer.data.batch import NeuralBatch
 from brainwhisperer.models.model import BrainWhisperer
 from brainwhisperer.training.losses import ctc_loss
+from brainwhisperer.utils.text import build_normalizer
 
 
 class BWLightningModule(LightningModule):
@@ -65,7 +65,7 @@ class BWLightningModule(LightningModule):
             "max_mask_pct": a.max_mask_pct,
         }
 
-        self._normalizer = BasicTextNormalizer()
+        self._normalizer = build_normalizer()
         self._wer = WordErrorRate()
 
         N = len(val_dataloader_names)
