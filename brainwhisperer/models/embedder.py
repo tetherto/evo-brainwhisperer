@@ -40,6 +40,7 @@ class BWEmbedder(nn.Module):
         super().__init__()
         self.embed_type = cfg.embed_type
         self.d_model = cfg.d_model
+        self.ref_half_layout = cfg.ref_half_layout  # DEBUG
         self.num_features = cfg.num_features
         self.stride_2 = cfg.stride_2
         self.day_projections = cfg.day_projections
@@ -76,11 +77,12 @@ class BWEmbedder(nn.Module):
                 for i in range(num_months):
                     nn.init.eye_(self.proj_W_month[i])
                 self.proj_b_month = nn.Parameter(torch.zeros(num_months, C))
-                self.proj_A = nn.Parameter(torch.randn(num_days, C, r) * 0.01)
+                self.proj_A = nn.Parameter(torch.randn(num_days, C, r))
                 self.proj_B = nn.Parameter(torch.zeros(num_days, r, C))
                 self.proj_b_day = nn.Parameter(torch.zeros(num_days, C))
 
-        self.proj_dropout = nn.Dropout(cfg.dropout)
+        self.day_layer_dropout = nn.Dropout(cfg.day_layer_dropout)
+        self.session_dropout = nn.Dropout(cfg.session_dropout)
 
         # Buffer for sinusoidal day encoding so that PE amplitude
         # reflects actual temporal spacing between recordings.
@@ -112,6 +114,7 @@ class BWEmbedder(nn.Module):
             self.patch_proj = nn.Linear(patch_in, cfg.d_model)
             self.patch_norm2 = nn.LayerNorm(cfg.d_model)
             self.patch_size = cfg.patch_size
+            self.embed_dropout = nn.Dropout(cfg.dropout)  # (patch mode only)
 
         # Day encoding
         if cfg.encodings == "sin":
@@ -132,8 +135,6 @@ class BWEmbedder(nn.Module):
         """
         if self.day_projections:
             signals = self._apply_day_proj(signals, day_idx)
-
-        signals = self.proj_dropout(signals)
 
         if self.embed_type == "conv":
             x = self._embed_conv(signals)
@@ -171,7 +172,9 @@ class BWEmbedder(nn.Module):
 
             parts.append(F.softsign(xi @ W + b))
 
-        x = torch.stack(parts)  # (B, T, C)
+        x = torch.stack(parts)  # (B, T, C), contiguous
+        x = self.day_layer_dropout(x)
+
         return x.permute(0, 2, 1)  # (B, C, T)
 
     # ------------------------------------------------------------------
@@ -200,7 +203,7 @@ class BWEmbedder(nn.Module):
         x = self.patch_norm1(x)
         x = self.patch_proj(x)
         x = self.patch_norm2(x)
-        return x
+        return self.embed_dropout(x)
 
     # ------------------------------------------------------------------
     # Day encoding  (added to last d_model//2 dims after tokenisation)
@@ -212,8 +215,16 @@ class BWEmbedder(nn.Module):
             if self.session_to_calendar_day is not None
             else day_idx
         )
-        day_enc = self.day_encoding(positions)  # (B, d_model//2)
+        day_enc = self.session_dropout(self.day_encoding(positions))  # (B, d_model//2)
         half = self.d_model // 2
-        left = x[:, :, :half] + day_enc.unsqueeze(1)  # session encoding on first half
-        right = x[:, :, half:]  # the encoder applies temporal encoding on this half
+        # DEBUG
+        if self.ref_half_layout:
+            # REF convention (pre-refactor/model.py:1105): session enc on LAST half.
+            left = x[:, :, :half]
+            right = x[:, :, half:] + day_enc.unsqueeze(1)
+        else:
+            left = x[:, :, :half] + day_enc.unsqueeze(
+                1
+            )  # session encoding on first half
+            right = x[:, :, half:]  # the encoder applies temporal encoding on this half
         return torch.cat([left, right], dim=-1)
