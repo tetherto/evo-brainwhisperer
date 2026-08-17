@@ -2,11 +2,15 @@ import torch
 import torch.distributed.tensor
 from peft import LoraConfig, get_peft_model
 from torch import Tensor, nn
-from transformers import WhisperConfig, WhisperForConditionalGeneration
+from transformers import (
+    WhisperConfig,
+    WhisperForConditionalGeneration,
+    WhisperTokenizer,
+)
 
 from brainwhisperer.config.schema import BWModelConfig
 from brainwhisperer.data.batch import NeuralBatch
-from brainwhisperer.models.embedder import _MAX_SOURCE_POSITIONS, BWEmbedder
+from brainwhisperer.models.embedder import BWEmbedder
 from brainwhisperer.models.encoder import BWEncoder
 
 _N_PHONE_CLASSES = 41  # CMU phoneme set used in CARD/Willet
@@ -83,16 +87,28 @@ class BrainWhisperer(nn.Module):
         whisper = WhisperForConditionalGeneration.from_pretrained(
             cfg.whisper_name, config=whisper_cfg
         )
+        # HF models load in eval() mode by default, explicitly calling `train()`
+        # activates dropout in decoder during training.
+        whisper.train()
+        # Force the full decoder prompt [<|sot|>, <|en|>, <|transcribe|>, <|notimestamps|>].
+        _prefix = WhisperTokenizer.from_pretrained(
+            cfg.whisper_name, language="en", task="transcribe"
+        ).prefix_tokens
+        whisper.generation_config.forced_decoder_ids = [
+            [i, tok] for i, tok in enumerate(_prefix[1:], start=1)
+        ]
         lora_cfg = LoraConfig(
             r=cfg.lora.r,
             lora_alpha=cfg.lora.alpha,
             lora_dropout=cfg.lora.dropout,
             target_modules=list(cfg.lora.target_modules),
         )
-        self.whisper = get_peft_model(whisper, lora_cfg)
-        # Whisper's built-in encoder is always bypassed, since the model uses BWEncoder.
-        # Distirbuted trainign requires explicitly turning off the gradients to avoid errors.
-        self.whisper.model.model.encoder.requires_grad_(False)
+        # Scopes LoRA to the decoder submodule only; avoid wasted VRAM.
+        # Whisper's built-in encoder is always bypassed (BWEncoder replaces it); freeze it so
+        # distributed training does not error on unused parameters.
+        whisper.model.encoder.requires_grad_(False)
+        whisper.model.decoder = get_peft_model(whisper.model.decoder, lora_cfg)
+        self.whisper = whisper
 
         # CTC heads
         # Unfold consecutive tokens into a single CTC frame (80 ms windows).
@@ -105,6 +121,7 @@ class BrainWhisperer(nn.Module):
         self.char_head = nn.Linear(ctc_in, vocab_size)
 
         self._d_model = d_model
+        self.max_source_pos = cfg.encoder.max_source_pos
 
     def forward(self, batch: NeuralBatch, encoder_only: bool = False) -> dict:
         """
@@ -123,7 +140,7 @@ class BrainWhisperer(nn.Module):
         # CTC frame count per sample
         raw_len = batch.lengths
         x_len_emb = (raw_len // self._stride_2 + raw_len % self._stride_2).clamp(
-            max=_MAX_SOURCE_POSITIONS
+            max=self.max_source_pos
         )
         x_len = (x_len_emb // self._unfold_width).long()
 
@@ -171,7 +188,7 @@ class BrainWhisperer(nn.Module):
         B, T, D = x.shape
         W = self._unfold_width
         T_ctc = T // W
-        return x[:, : T_ctc * W, :].reshape(B, T_ctc, W * D)
+        return x[:, : T_ctc * W, :].unfold(1, W, W).reshape(B, T_ctc, D * W)
 
     def unfreeze_whisper_decoder(self) -> None:
         """Enable gradients for all Whisper decoder parameters.
