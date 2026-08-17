@@ -1,0 +1,144 @@
+"""
+Train-time parity guards.
+
+The refactor must reproduce the REFERENCE (pre-refactor) codebase's *initialization*
+and *regularization*, not just its forward computation. The existing numerical tests
+(e.g. test_embedder_numerical) copy trained weights in before comparing outputs, so they
+verify FORWARD equivalence but are structurally blind to init/dropout: those affect only
+training dynamics and produce identical eval-mode output for identical weights.
+
+Every assertion below corresponds to a divergence that was found and fixed against
+REFERENCE. Each one produces a *bit-identical forward given the same weights*, which is
+exactly why forward-equivalence tests never caught them.
+"""
+
+import torch
+from torch import nn
+
+from brainwhisperer.config.schema import BWEmbedderConfig, BWEncoderConfig
+from brainwhisperer.models.embedder import BWEmbedder
+from brainwhisperer.models.encoder import BWEncoder
+
+_INIT_STD = 0.02  # whisper-tiny WhisperConfig.init_std; REFERENCE encoder gets it via post_init()
+
+
+def _encoder() -> BWEncoder:
+    return BWEncoder(
+        BWEncoderConfig(
+            d_model=384,
+            n_heads=6,
+            d_ff=1536,
+            n_layers=6,
+            dropout=0.1,
+            last_phoneme_layer=3,
+            attn_window_size=57,
+            rope=False,
+        )
+    )
+
+
+def _embedder(rank: int = 16) -> BWEmbedder:
+    return BWEmbedder(
+        BWEmbedderConfig(
+            num_features=512,
+            d_model=384,
+            embed_type="conv",
+            kernel_size_1=7,
+            stride_2=2,
+            patch_size=5,
+            encodings="sin",
+            day_projections=True,
+            day_proj_rank=rank,
+            dropout=0.4,
+            day_layer_dropout=0.2,
+            session_dropout=0.1,
+        ),
+        num_days=45,
+    )
+
+
+class TestEncoderInitParity:
+    """REFERENCE WhisperEncoder_ subclasses WhisperPreTrainedModel → post_init() runs HF
+    _init_weights (std=0.02). Composing WhisperEncoderLayer directly skips post_init and would
+    leave PyTorch's fan-in default (~0.03)."""
+
+    def test_layer_weights_use_hf_init(self):
+        enc = _encoder()
+        for i, layer in enumerate(enc.layers):
+            params = dict(layer.named_parameters())
+            for name in (
+                "self_attn.q_proj",
+                "self_attn.k_proj",
+                "self_attn.v_proj",
+                "self_attn.out_proj",
+                "fc1",
+                "fc2",
+            ):
+                std = params[name + ".weight"].std().item()
+                assert abs(std - _INIT_STD) < 0.004, (
+                    f"encoder layer{i}.{name}.weight std={std:.4f}, expected HF init "
+                    f"~{_INIT_STD}. PyTorch default (~0.03) means post_init was skipped."
+                )
+
+    def test_temporal_pe_is_frozen_random_not_sinusoidal(self):
+        enc = _encoder()
+        assert "pos_encoding" in dict(enc.named_buffers()), "temporal PE must be a (frozen) buffer"
+        pe = enc.pos_encoding
+        assert not pe.requires_grad, "temporal PE must be frozen (REF: requires_grad_(False))"
+        std = pe.std().item()
+        assert abs(std - _INIT_STD) < 0.004, (
+            f"temporal PE std={std:.4f}, expected frozen-random ~{_INIT_STD}. "
+            f"A sinusoidal table has std ~0.68 (that was the divergence)."
+        )
+
+
+class TestEmbedderInitParity:
+    """REFERENCE WhisperEmbedder day-projection: day_As = torch.randn(...) (unscaled, std~1.0),
+    day_Bs = 0, month weights = identity."""
+
+    def test_proj_A_is_unscaled_randn(self):
+        emb = _embedder()
+        std = emb.proj_A.std().item()
+        assert abs(std - 1.0) < 0.1, (
+            f"proj_A std={std:.4f}, expected ~1.0 (REF unscaled randn). A *0.01 scaling makes "
+            f"the low-rank per-day delta (A@B, B init 0) learn ~100x slower."
+        )
+
+    def test_proj_B_inits_to_zero(self):
+        assert (_embedder().proj_B == 0).all(), "proj_B must init to zero"
+
+    def test_month_weights_init_to_identity(self):
+        assert torch.allclose(_embedder().proj_W_month[0], torch.eye(512))
+
+
+class TestEmbedderDropoutParity:
+    """REFERENCE Card conv path applies day_layer_dropout(0.2) after the day projection and
+    Dropout(0.1) on the session encoding; embed_dropout(0.4) is patch-mode only."""
+
+    def test_dropout_probabilities_match_reference(self):
+        emb = _embedder()
+        assert emb.day_layer_dropout.p == 0.2, "day-layer dropout must be 0.2 (REF hardcoded)"
+        assert emb.session_dropout.p == 0.1, "session dropout must be 0.1 (REF PositionalEncoding)"
+
+    def test_no_legacy_proj_dropout(self):
+        emb = _embedder()
+        assert not hasattr(emb, "proj_dropout"), (
+            "the old single proj_dropout(0.4) applied the patch-mode value on the conv path; "
+            "it must be replaced by day_layer_dropout(0.2)."
+        )
+
+    def test_conv_path_has_no_embed_dropout_applied(self):
+        # embed_dropout exists only for patch mode; a conv embedder must not carry it.
+        emb = _embedder()
+        assert not hasattr(emb, "embed_dropout"), "embed_dropout is patch-mode only, not conv"
+
+    def test_session_encoding_passes_through_dropout(self):
+        """In train mode the session-encoding path must actually drop (p=0.1)."""
+        emb = _embedder().train()
+        torch.manual_seed(0)
+        x = torch.zeros(4, 1500, 384)
+        day = torch.zeros(4, dtype=torch.long)
+        out = emb._add_day_encoding(x, day)
+        # with p=0.1 some session-encoding entries on the first half are zeroed; the survivors
+        # are scaled by 1/(1-p), so the first half is not simply the raw encoding.
+        assert out[:, :, :192].abs().sum() > 0

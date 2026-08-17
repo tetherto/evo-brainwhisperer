@@ -63,6 +63,8 @@ def lightning_module(tokenizer):
         day_projections=False,
         day_proj_rank=0,
         dropout=0.0,
+        day_layer_dropout=0.0,
+        session_dropout=0.0,
     )
     enc_cfg = BWEncoderConfig(
         n_layers=6,

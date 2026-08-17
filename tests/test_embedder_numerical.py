@@ -175,6 +175,8 @@ def loaded_embedder(ckpt_weights, session_to_contiguous_month):
         day_projections=True,
         day_proj_rank=r,
         dropout=0.0,
+        day_layer_dropout=0.0,
+        session_dropout=0.0,
     )
     emb = BWEmbedder(cfg, num_days=n_days, session_to_month=session_to_contiguous_month)
 

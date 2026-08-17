@@ -56,6 +56,8 @@ def _embedder_cfg(embed_type: str = "conv") -> BWEmbedderConfig:
         day_projections=True,
         day_proj_rank=4,  # small rank for fast tests
         dropout=0.0,  # deterministic forward
+        day_layer_dropout=0.0,
+        session_dropout=0.0,
     )
 
 
@@ -308,6 +310,8 @@ def card_model():
             day_projections=True,
             day_proj_rank=4,
             dropout=0.0,
+            day_layer_dropout=0.0,
+            session_dropout=0.0,
         ),
         encoder=_encoder_cfg(),
         lora=BWLoRAConfig(
