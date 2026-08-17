@@ -43,6 +43,14 @@ def main(cfg: DictConfig) -> None:
     )
     _per_rank_batch = cfg.data.batch_size // _world_size
 
+    # Scale days_per_batch by world size alongside batch_size, so each rank keeps
+    # the correct samples-per-day.
+    assert cfg.data.days_per_batch % _world_size == 0, (
+        f"days_per_batch ({cfg.data.days_per_batch}) must be divisible by "
+        f"world size ({_world_size})"
+    )
+    _per_rank_days = cfg.data.days_per_batch // _world_size
+
     # Validate dataset and embedder counts match
     assert len(cfg.data.datasets) == cfg.model.n_embedders, (
         f"The number of datasets ({len(cfg.data.datasets)}) must equal "
@@ -94,7 +102,7 @@ def main(cfg: DictConfig) -> None:
     train_sampler = StratifiedDayBatchSampler(
         train_combined,
         batch_size=_per_rank_batch,
-        days_per_batch=cfg.data.days_per_batch,
+        days_per_batch=_per_rank_days,
         rank=_rank,
         world_size=_world_size,
         seed=cfg.training.seed,
