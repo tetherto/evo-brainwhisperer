@@ -71,6 +71,8 @@ def _encoder_cfg() -> BWEncoderConfig:
         last_phoneme_layer=4,
         attn_window_size=29,
         rope=False,
+        max_source_pos=1500,
+        temporal_pe_std=0.02,
     )
 
 

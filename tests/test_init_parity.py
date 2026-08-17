@@ -33,6 +33,8 @@ def _encoder() -> BWEncoder:
             last_phoneme_layer=3,
             attn_window_size=57,
             rope=False,
+            max_source_pos=1500,
+            temporal_pe_std=0.02,
         )
     )
 
@@ -82,9 +84,13 @@ class TestEncoderInitParity:
 
     def test_temporal_pe_is_frozen_random_not_sinusoidal(self):
         enc = _encoder()
-        assert "pos_encoding" in dict(enc.named_buffers()), "temporal PE must be a (frozen) buffer"
+        assert "pos_encoding" in dict(enc.named_buffers()), (
+            "temporal PE must be a (frozen) buffer"
+        )
         pe = enc.pos_encoding
-        assert not pe.requires_grad, "temporal PE must be frozen (REF: requires_grad_(False))"
+        assert not pe.requires_grad, (
+            "temporal PE must be frozen (REF: requires_grad_(False))"
+        )
         std = pe.std().item()
         assert abs(std - _INIT_STD) < 0.004, (
             f"temporal PE std={std:.4f}, expected frozen-random ~{_INIT_STD}. "
@@ -117,8 +123,12 @@ class TestEmbedderDropoutParity:
 
     def test_dropout_probabilities_match_reference(self):
         emb = _embedder()
-        assert emb.day_layer_dropout.p == 0.2, "day-layer dropout must be 0.2 (REF hardcoded)"
-        assert emb.session_dropout.p == 0.1, "session dropout must be 0.1 (REF PositionalEncoding)"
+        assert emb.day_layer_dropout.p == 0.2, (
+            "day-layer dropout must be 0.2 (REF hardcoded)"
+        )
+        assert emb.session_dropout.p == 0.1, (
+            "session dropout must be 0.1 (REF PositionalEncoding)"
+        )
 
     def test_no_legacy_proj_dropout(self):
         emb = _embedder()
@@ -130,7 +140,9 @@ class TestEmbedderDropoutParity:
     def test_conv_path_has_no_embed_dropout_applied(self):
         # embed_dropout exists only for patch mode; a conv embedder must not carry it.
         emb = _embedder()
-        assert not hasattr(emb, "embed_dropout"), "embed_dropout is patch-mode only, not conv"
+        assert not hasattr(emb, "embed_dropout"), (
+            "embed_dropout is patch-mode only, not conv"
+        )
 
     def test_session_encoding_passes_through_dropout(self):
         """In train mode the session-encoding path must actually drop (p=0.1)."""

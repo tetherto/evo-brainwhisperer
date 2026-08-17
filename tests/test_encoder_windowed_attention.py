@@ -9,8 +9,9 @@ changed which hidden state fed the CTC head.  The correct code is
 These tests verify the inclusive boundary holds by monkey-patching each
 WhisperEncoderLayer.forward to record what attention_mask it received.
 """
-import torch
+
 import pytest
+import torch
 
 from brainwhisperer.config.schema import BWEncoderConfig
 from brainwhisperer.models.encoder import BWEncoder
@@ -31,6 +32,8 @@ def _encoder_cfg(last_phoneme_layer: int) -> BWEncoderConfig:
         last_phoneme_layer=last_phoneme_layer,
         attn_window_size=11,
         rope=False,
+        max_source_pos=1500,
+        temporal_pe_std=0.02,
     )
 
 
@@ -41,9 +44,11 @@ def _capture_masks(encoder: BWEncoder, x: torch.Tensor) -> dict[int, bool]:
 
     def _make_hook(idx: int):
         orig = original_fwds[idx]
+
         def _hook(*args, **kwargs):
             received[idx] = kwargs.get("attention_mask") is not None
             return orig(*args, **kwargs)
+
         return _hook
 
     for i, layer in enumerate(encoder.layers):
@@ -78,7 +83,9 @@ def test_windowed_mask_applied_to_last_phoneme_layer_specifically():
     x = torch.randn(1, _SEQ, _D_MODEL)
     masks = _capture_masks(encoder, x)
 
-    assert masks[3] is True,  "Layer 3 (last_phoneme_layer) must receive the windowed mask"
+    assert masks[3] is True, (
+        "Layer 3 (last_phoneme_layer) must receive the windowed mask"
+    )
     assert masks[4] is False, "Layer 4 must NOT receive the windowed mask"
 
 

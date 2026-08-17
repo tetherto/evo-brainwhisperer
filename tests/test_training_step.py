@@ -75,6 +75,8 @@ def lightning_module(tokenizer):
         last_phoneme_layer=4,
         attn_window_size=29,
         rope=False,
+        max_source_pos=1500,
+        temporal_pe_std=0.02,
     )
     lora_cfg = BWLoRAConfig(
         r=8, alpha=16, dropout=0.0, target_modules=["q_proj", "v_proj"]
@@ -110,7 +112,9 @@ def lightning_module(tokenizer):
         ),
     )
     model = BrainWhisperer(model_cfg, num_days_per_embedder=[num_days])
-    lm = BWLightningModule(model, training_cfg, tokenizer, val_dataloader_names=["card"])
+    lm = BWLightningModule(
+        model, training_cfg, tokenizer, val_dataloader_names=["card"]
+    )
     lm.log = lambda *args, **kwargs: None
     return lm
 
