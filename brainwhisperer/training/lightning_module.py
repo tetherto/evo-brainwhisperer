@@ -342,7 +342,7 @@ class BWLightningModule(LightningModule):
         # Log decoder grad norms separately from the encoder.
         # The encoder receives no gradients in this architecture, so
         # logging the full PeftModel would dilute the decoder mean toward zero.
-        whisper_decoder = self.model.whisper.model.model.decoder
+        whisper_decoder = self.model.whisper.model.decoder
         for tag, module in [
             ("embedders", self.model.embedders),
             ("encoder", self.model.encoder),
