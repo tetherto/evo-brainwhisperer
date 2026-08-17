@@ -17,7 +17,9 @@ model:
     encodings: sin
     day_projections: true
     day_proj_rank: 16
-    dropout: 0.4
+    dropout: 0.4              # for patch-mode only
+    day_layer_dropout: 0.2    # applied after day projection
+    session_dropout: 0.1      # default dropout session encoding
   encoder:
     n_layers: 6
     n_heads: 6
@@ -30,7 +32,7 @@ model:
   lora:
     r: 8
     alpha: 16
-    dropout: 0.05
+    dropout: 0.0    # matching peft's default lora_dropout=0.0 (never set)
     target_modules:
       - q_proj
       - k_proj
@@ -58,7 +60,7 @@ training:
   ctc_char_coeff: 0.0
   scheduler: cosine
   seed: 1
-  matmul_precision: high    # highest (fp32) | high (TF32) | medium (bf16)
+  matmul_precision: highest    # highest (fp32) | high (TF32) | medium (bf16)
   augmentation:
     gain_std: 0.0
     noise_std: 1.0
