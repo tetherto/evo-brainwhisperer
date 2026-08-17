@@ -19,7 +19,10 @@ class BWEmbedderConfig:
     day_proj_rank: int = (
         MISSING  # low-rank delta rank (0 = full d_model×d_model per day)
     )
-    dropout: float = MISSING
+    dropout: float = MISSING  # patch-mode embedding dropout
+    day_layer_dropout: float = MISSING  # dropout after the per-day projection
+    session_dropout: float = MISSING  # dropout on the session encoding
+    ref_half_layout: bool = False  # DEBUG: A/B flag: True → session enc on LAST half (REF convention); False → first half (CANDIDATE)
 
 
 @dataclass
@@ -34,6 +37,7 @@ class BWEncoderConfig:
     )
     attn_window_size: int = MISSING  # tokens each position can attend to left+right
     rope: bool = MISSING  # T5-style relative position bias (unused in logged runs)
+    ref_half_layout: bool = False  # DEBUG: A/B flag: True → temporal PE on FIRST half (REF convention); False → last half (CANDIDATE)
 
 
 @dataclass
