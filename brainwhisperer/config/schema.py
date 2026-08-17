@@ -35,6 +35,10 @@ class BWEncoderConfig:
     last_phoneme_layer: int = (
         MISSING  # layers 0..last_phoneme_layer-1 use windowed attention
     )
+    max_source_pos: int = (
+        MISSING  # Whisper encoder max positions; embedder output length
+    )
+    temporal_pe_std: float = MISSING
     attn_window_size: int = MISSING  # tokens each position can attend to left+right
     rope: bool = MISSING  # T5-style relative position bias (unused in logged runs)
     ref_half_layout: bool = False  # DEBUG: A/B flag: True → temporal PE on FIRST half (REF convention); False → last half (CANDIDATE)

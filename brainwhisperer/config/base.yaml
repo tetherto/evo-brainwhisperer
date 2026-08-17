@@ -28,6 +28,8 @@ model:
     dropout: 0.1
     last_phoneme_layer: 3
     attn_window_size: 57
+    max_source_pos: 1500  # embedder output len
+    temporal_pe_std: 0.02
     rope: false
   lora:
     r: 8

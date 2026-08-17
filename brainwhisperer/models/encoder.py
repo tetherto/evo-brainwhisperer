@@ -5,7 +5,6 @@ from transformers.modeling_outputs import BaseModelOutput
 from transformers.models.whisper.modeling_whisper import WhisperEncoderLayer
 
 from brainwhisperer.config.schema import BWEncoderConfig
-from brainwhisperer.models.positional_encoding import PositionalEncoding
 
 
 class BWEncoder(nn.Module):
@@ -29,6 +28,7 @@ class BWEncoder(nn.Module):
         super().__init__()
         self.last_phoneme_layer = cfg.last_phoneme_layer
         self.attn_window_size = cfg.attn_window_size
+        self.ref_half_layout = cfg.ref_half_layout  # DEBUG
 
         # Build WhisperEncoderLayer instances from a minimal WhisperConfig.
         layer_config = WhisperConfig(
@@ -39,16 +39,22 @@ class BWEncoder(nn.Module):
             attention_dropout=cfg.dropout,
             activation_dropout=cfg.dropout,
             activation_function="gelu",
+            attn_implementation="sdpa",
         )
         self.layers = nn.ModuleList(
             [WhisperEncoderLayer(layer_config) for _ in range(cfg.n_layers)]
         )
+        # Replicating HF's weights initialization
+        self.layers.apply(_hf_init_weights)
         self.layer_norm = nn.LayerNorm(cfg.d_model)
         self.dropout = nn.Dropout(cfg.dropout)
 
-        # Sinusoidal temporal encoding added to last d_model//2 dims,
-        # while session encoding has been added to first d_model//2 dims by the embedder.
-        self.pos_encoding = PositionalEncoding(cfg.d_model, max_len=_MAX_SEQ_LEN)
+        # Temporal position encoding added to the last d_model//2 dims (the embedder
+        # occupies the first d_model//2 dims with the session encoding).
+        temporal_pe = (
+            torch.randn(cfg.max_source_pos, cfg.d_model // 2) * cfg.temporal_pe_std
+        )
+        self.register_buffer("pos_encoding", temporal_pe)
 
         if cfg.rope:
             # TODO: T5-style relative position bias (rope=False in all logged runs)
@@ -58,11 +64,22 @@ class BWEncoder(nn.Module):
         """x: (B, 1500, d_model)"""
         _, T, D = x.shape
 
-        # Add sinusoidal sequence-position encoding to last D//2 dims
-        positions = torch.arange(T, device=x.device)  # (T,)
-        pos_enc = self.pos_encoding(positions)  # (T, D//2)
+        # Add temporal position encoding to last D//2 dims (frozen random; see __init__)
         half = D // 2
-        x = torch.cat([x[:, :, :half], x[:, :, half:] + pos_enc.unsqueeze(0)], dim=-1)
+        pos_enc = self.pos_encoding[:T]  # (T, D//2)
+        # DEBUG
+        if self.ref_half_layout:
+            # REF convention (pre-refactor/model.py:1178): temporal PE on FIRST half.
+            x = torch.cat(
+                [x[:, :, :half] + pos_enc.unsqueeze(0), x[:, :, half:]], dim=-1
+            )
+        else:
+            x = torch.cat(
+                [x[:, :, :half], x[:, :, half:] + pos_enc.unsqueeze(0)], dim=-1
+            )
+
+        # Ensuring contiguous memory layout for downstream dropout calls.
+        x = x.transpose(1, 2).contiguous().transpose(1, 2)
 
         x = self.dropout(x)
 
@@ -70,6 +87,9 @@ class BWEncoder(nn.Module):
 
         all_hidden = (x,)
         for i, layer in enumerate(self.layers):
+            # Forcing HF's LayerDrop check during training
+            if self.training:
+                torch.rand([], device=x.device)
             mask = windowed_mask if i <= self.last_phoneme_layer else None
             x = layer(x, attention_mask=mask, layer_head_mask=None)[0]
             all_hidden = all_hidden + (x,)
@@ -89,8 +109,18 @@ class BWEncoder(nn.Module):
         i = torch.arange(seq_len, device=device).unsqueeze(1)
         j = torch.arange(seq_len, device=device).unsqueeze(0)
         blocked = (i - j).abs() > radius
-        mask = blocked.float() * -1e9
+        mask = torch.zeros(seq_len, seq_len, device=device)
+        mask.masked_fill_(blocked, float("-inf"))
         return mask.unsqueeze(0).unsqueeze(0)  # (1, 1, seq_len, seq_len)
 
 
-_MAX_SEQ_LEN = 10000
+def _hf_init_weights(module: nn.Module, init_std=0.02) -> None:
+    """Replicate transformers WhisperPreTrainedModel._init_weights (init_std=0.02)."""
+    if isinstance(module, (nn.Linear, nn.Conv1d)):
+        module.weight.data.normal_(mean=0.0, std=init_std)
+        if module.bias is not None:
+            module.bias.data.zero_()
+    elif isinstance(module, nn.Embedding):
+        module.weight.data.normal_(mean=0.0, std=init_std)
+        if module.padding_idx is not None:
+            module.weight.data[module.padding_idx].zero_()
