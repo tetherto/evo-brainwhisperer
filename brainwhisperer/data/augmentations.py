@@ -1,7 +1,10 @@
 """
 Pure augmentation functions operating on (B, C, T) float tensors.
 All functions are stateless and device-agnostic.
-transform_data() is the composition used in lightning_module.training_step().
+transform_data() is the mode="val" composition used directly in
+lightning_module's validation_step() and eval.py; training_step() composes
+apply_noise()/random_time_cut()/gaussian_smooth()/time_mask() itself so its
+two-phase views can share one noise draw (see apply_noise()'s docstring).
 """
 
 import numpy as np
@@ -165,6 +168,23 @@ def time_mask(
     return x * (~mask).unsqueeze(1)
 
 
+# Channel/DC/drift noise, factored out of transform_data() to be drawn and
+# used once in the two-phase training_step.
+# .migration-memory/phase1-contamination-confirmed.md.
+def apply_noise(
+    x: Tensor, gain_std: float, noise_std: float, offset_std: float, walk_std: float
+) -> Tensor:
+    if gain_std > 0:
+        x = static_gain_noise(x, gain_std)
+    if noise_std > 0:
+        x = white_noise(x, noise_std)
+    if offset_std > 0:
+        x = offset_noise(x, offset_std)
+    if walk_std > 0:
+        x = random_walk_noise(x, walk_std)
+    return x
+
+
 def transform_data(
     x: Tensor,
     lengths: Tensor,
@@ -186,10 +206,7 @@ def transform_data(
     """
     assert mode in ("train", "val"), f"mode must be 'train' or 'val', got {mode!r}"
     if mode == "train":
-        x = static_gain_noise(x, gain_std)
-        x = white_noise(x, noise_std)
-        x = offset_noise(x, offset_std)
-        x = random_walk_noise(x, walk_std)
+        x = apply_noise(x, gain_std, noise_std, offset_std, walk_std)
         x, lengths = random_time_cut(x, lengths, max_cut)
     x = gaussian_smooth(x, smooth_kernel_size, smooth_sigma)
     if mode == "train":

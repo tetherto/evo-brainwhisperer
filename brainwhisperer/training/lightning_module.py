@@ -15,7 +15,13 @@ from torchmetrics.text import WordErrorRate
 from transformers import PreTrainedTokenizer
 
 from brainwhisperer.config.schema import BWTrainingConfig
-from brainwhisperer.data.augmentations import transform_data
+from brainwhisperer.data.augmentations import (
+    apply_noise,
+    gaussian_smooth,
+    random_time_cut,
+    time_mask,
+    transform_data,
+)
 from brainwhisperer.data.batch import NeuralBatch
 from brainwhisperer.models.model import BrainWhisperer
 from brainwhisperer.training.losses import ctc_loss
@@ -181,16 +187,24 @@ class BWLightningModule(LightningModule):
     # ------------------------------------------------------------------
 
     def training_step(self, batch: NeuralBatch, batch_idx: int):
-        # CE loss on clean (smoothed-only) signal
-        x_clean, len_clean = transform_data(
-            batch.signals, batch.lengths, mode="val", **self._aug
+        x_noised = apply_noise(
+            batch.signals,
+            self._aug["gain_std"],
+            self._aug["noise_std"],
+            self._aug["offset_std"],
+            self._aug["walk_std"],
+        )
+
+        # Phase 1 (CE loss on noise-augmented signal, uncut and unmasked).
+        x_clean = gaussian_smooth(
+            x_noised, self._aug["smooth_kernel_size"], self._aug["smooth_sigma"]
         )
         clean_batch = NeuralBatch(
             signals=x_clean,
             labels=batch.labels,
             sbj_idx=batch.sbj_idx,
             day_idx=batch.day_idx,
-            lengths=len_clean,
+            lengths=batch.lengths,
         )
 
         # Disable dropout so CE loss is computed deterministically.
@@ -204,16 +218,20 @@ class BWLightningModule(LightningModule):
         self.log("train_ce_loss", ce_loss, prog_bar=True)
         loss = self.cfg.ce_coeff * ce_loss
 
-        # CTC loss on augmented + masked signal
-        x_aug, len_aug = transform_data(
-            batch.signals, batch.lengths, mode="train", **self._aug
+        # Phase 2 (CTC loss on the same noise-augmented signal, which is also cut, smoothed and masked).
+        x_cut, len_cut = random_time_cut(x_noised, batch.lengths, self._aug["max_cut"])
+        x_smoothed = gaussian_smooth(
+            x_cut, self._aug["smooth_kernel_size"], self._aug["smooth_sigma"]
+        )
+        x_aug = time_mask(
+            x_smoothed, len_cut, self._aug["num_masks"], self._aug["max_mask_pct"]
         )
         aug_batch = NeuralBatch(
             signals=x_aug,
             labels=batch.labels,
             sbj_idx=batch.sbj_idx,
             day_idx=batch.day_idx,
-            lengths=len_aug,
+            lengths=len_cut,
         )
         out_aug = self.model(aug_batch, encoder_only=True)
 
