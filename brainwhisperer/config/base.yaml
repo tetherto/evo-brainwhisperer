@@ -62,7 +62,7 @@ training:
   ctc_char_coeff: 0.0
   scheduler: cosine
   seed: 1
-  matmul_precision: highest    # highest (fp32) | high (TF32) | medium (bf16)
+  matmul_precision: high    # highest (fp32) | high (TF32) | medium (bf16)
   augmentation:
     gain_std: 0.0
     noise_std: 1.0
