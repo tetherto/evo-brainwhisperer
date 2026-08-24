@@ -1,4 +1,6 @@
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import hydra
@@ -23,9 +25,40 @@ from brainwhisperer.training.lightning_module import BWLightningModule
 from brainwhisperer.utils.sessions import SESSIONS_BY_DATASET, sessions_to_calendar_days
 
 
+def _needs_torchrun(devices: int) -> bool:
+    """Flag for multi-GPU training if distributed launcher is unset.
+    `torchrun` and `torchelastic` set RANK and TORCHELASTIC_RUN_ID in every worker
+    process. If those are set, the multi-GPU delegation needs to be skipped
+    """
+    already_distributed = "TORCHELASTIC_RUN_ID" in os.environ or "RANK" in os.environ
+    return devices > 1 and not already_distributed
+
+
 @hydra.main(config_path="brainwhisperer/config", config_name="base", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     OmegaConf.to_container(cfg, throw_on_missing=True)
+
+    # ------------------------------------------------------------------
+    # Multi-GPU delegation
+    # ------------------------------------------------------------------
+    if _needs_torchrun(cfg.training.devices):
+        run_dir = HydraConfig.get().runtime.output_dir
+        overrides = list(HydraConfig.get().overrides.task)
+        cmd = [
+            sys.executable,
+            "-m",
+            "torch.distributed.run",
+            f"--nproc_per_node={cfg.training.devices}",
+            os.path.abspath(__file__),
+            *overrides,
+            f"hydra.run.dir={run_dir}",
+            "hydra.output_subdir=null",
+        ]
+        raise SystemExit(
+            subprocess.run(
+                cmd, cwd=os.path.dirname(os.path.abspath(__file__))
+            ).returncode
+        )
 
     run_dir = Path(HydraConfig.get().runtime.output_dir)
 
@@ -79,6 +112,11 @@ def main(cfg: DictConfig) -> None:
         sessions_to_calendar_days(SESSIONS_BY_DATASET[name])
         for name in cfg.data.datasets
     ]
+    # Per-dataset override of model.embedder
+    embedder_cfg_per_embedder = [
+        OmegaConf.merge(cfg.model.embedder, cfg.data.embedder_overrides.get(name, {}))
+        for name in cfg.data.datasets
+    ]
     val_names = list(cfg.data.datasets)
 
     train_datasets, val_dataloaders = [], []
@@ -117,7 +155,12 @@ def main(cfg: DictConfig) -> None:
     # ------------------------------------------------------------------
     # Model + Lightning wrapper
     # ------------------------------------------------------------------
-    model = BrainWhisperer(cfg.model, num_days_per_embedder, calendar_days_per_embedder)
+    model = BrainWhisperer(
+        cfg.model,
+        num_days_per_embedder,
+        calendar_days_per_embedder,
+        embedder_cfg_per_embedder,
+    )
     lm = BWLightningModule(model, cfg.training, tokenizer, val_names)
 
     # ------------------------------------------------------------------
@@ -152,9 +195,10 @@ def main(cfg: DictConfig) -> None:
     logger = CSVLogger(save_dir=str(run_dir), name="logs")
 
     # ------------------------------------------------------------------
-    # Save the full config
+    # Save the full config (rank 0 only; all ranks share run_dir)
     # ------------------------------------------------------------------
-    OmegaConf.save(cfg, run_dir / "config.yaml")
+    if _rank == 0:
+        OmegaConf.save(cfg, run_dir / "config.yaml")
 
     # ------------------------------------------------------------------
     # Train
@@ -164,8 +208,15 @@ def main(cfg: DictConfig) -> None:
         gradient_clip_val=cfg.training.gradient_clip_val,
         # Detects if single or multi-GPU
         devices=_world_size if _world_size > 1 else cfg.training.devices,
-        # Avoids DDP errors for unused params
-        strategy=DDPStrategy(static_graph=True) if _world_size > 1 else "auto",
+        # static_graph=True is only used for a single embedder (single subject),
+        # cannot be used once a step's batch can skip some embedders depending on sampled data (multi-subject).
+        strategy=(
+            DDPStrategy(static_graph=True)
+            if _world_size > 1 and cfg.model.n_embedders == 1
+            else DDPStrategy(find_unused_parameters=True)
+            if _world_size > 1
+            else "auto"
+        ),
         # Using the custom StratifiedDayBatchSampler forces a workaround;
         # all ranks run the full validation set, redundant but correct.
         use_distributed_sampler=False,

@@ -69,6 +69,9 @@ class BWDataConfig:
     num_workers: int = MISSING
     max_seq_len: int = MISSING  # max token length for Whisper decoder
     days_per_batch: int = MISSING  # distinct recording days per batch; per-rank batch_size must be divisible by this
+    embedder_overrides: dict[str, dict] = field(
+        default_factory=dict
+    )  # Per-dataset override of specific model.embedder fields, keyed by dataset name
 
 
 @dataclass

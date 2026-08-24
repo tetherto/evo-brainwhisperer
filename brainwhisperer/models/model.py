@@ -8,7 +8,7 @@ from transformers import (
     WhisperTokenizer,
 )
 
-from brainwhisperer.config.schema import BWModelConfig
+from brainwhisperer.config.schema import BWEmbedderConfig, BWModelConfig
 from brainwhisperer.data.batch import NeuralBatch
 from brainwhisperer.models.embedder import BWEmbedder
 from brainwhisperer.models.encoder import BWEncoder
@@ -39,11 +39,20 @@ class BrainWhisperer(nn.Module):
         cfg: BWModelConfig,
         num_days_per_embedder: list[int],
         calendar_days_per_embedder: list[list[int]] | None = None,
+        embedder_cfg_per_embedder: list[BWEmbedderConfig] | None = None,
     ):
         super().__init__()
 
         assert len(num_days_per_embedder) == cfg.n_embedders, (
             f"num_days_per_embedder has {len(num_days_per_embedder)} entries "
+            f"but cfg.n_embedders={cfg.n_embedders}"
+        )
+
+        # Position-indexed, one BWEmbedderConfig per subject group. Defaults
+        # to `cfg.embedder` for every group unless a per-dataset override is found
+        embedder_cfgs = embedder_cfg_per_embedder or [cfg.embedder] * cfg.n_embedders
+        assert len(embedder_cfgs) == cfg.n_embedders, (
+            f"embedder_cfg_per_embedder has {len(embedder_cfgs)} entries "
             f"but cfg.n_embedders={cfg.n_embedders}"
         )
 
@@ -56,16 +65,18 @@ class BrainWhisperer(nn.Module):
         self.embedders = nn.ModuleList(
             [
                 BWEmbedder(
-                    cfg.embedder,
+                    emb_cfg,
                     num_days,
                     session_to_month=(
                         [d // 30 for d in cal_days] if cal_days is not None else None
                     ),
                     session_to_calendar_day=(
-                        cal_days if cfg.embedder.encodings == "sin" else None
+                        cal_days if emb_cfg.encodings == "sin" else None
                     ),
                 )
-                for num_days, cal_days in zip(num_days_per_embedder, cal_days_list)
+                for emb_cfg, num_days, cal_days in zip(
+                    embedder_cfgs, num_days_per_embedder, cal_days_list
+                )
             ]
         )
         # Share conv weights across subjects

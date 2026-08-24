@@ -101,6 +101,12 @@ def main() -> None:
         sessions_to_calendar_days(SESSIONS_BY_DATASET[name])
         for name in cfg.data.datasets
     ]
+    # Ensuring a checkpoint trained with per-dataset overrides evaluates
+    # with the same per-embedder encodings/day_proj_rank it was trained with.
+    embedder_cfg_per_embedder = [
+        OmegaConf.merge(cfg.model.embedder, cfg.data.embedder_overrides.get(name, {}))
+        for name in cfg.data.datasets
+    ]
     val_names = list(cfg.data.datasets)
 
     val_loaders = []
@@ -119,7 +125,12 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Model
     # ------------------------------------------------------------------
-    model = BrainWhisperer(cfg.model, num_days_per_embedder, calendar_days_per_embedder)
+    model = BrainWhisperer(
+        cfg.model,
+        num_days_per_embedder,
+        calendar_days_per_embedder,
+        embedder_cfg_per_embedder,
+    )
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
     # Lightning stores submodule weights under "model.*" (self.model = BrainWhisperer)
     state = {
