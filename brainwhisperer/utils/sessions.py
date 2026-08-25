@@ -93,6 +93,29 @@ KUNZ_T15_SESSIONS = [
     "t15.2025.01.05",
 ]
 
+# Placeholder only. These 10 arbitrary-but-parseable dates exist only to satisfy
+# sessions_to_calendar_days's structural requirement (every dataset needs an entry).
+WAIRAGKAR_SESSIONS = [
+    "t15.2024.01.01",
+    "t15.2024.01.02",
+    "t15.2024.01.03",
+    "t15.2024.01.04",
+    "t15.2024.01.05",
+    "t15.2024.01.06",
+    "t15.2024.01.07",
+    "t15.2024.01.08",
+    "t15.2024.01.09",
+    "t15.2024.01.10",
+]
+
+JUDE_SESSIONS = [
+    "t17.2024.04.15",
+    "t17.2024.04.16",
+    "t17.2024.04.17",
+    "t17.2024.05.06",
+    "t17.2024.05.07",
+]
+
 
 def session_to_day(sessions: list[str]) -> dict[str, int]:
     return {s: i for i, s in enumerate(sessions)}
@@ -114,4 +137,6 @@ SESSIONS_BY_DATASET: dict[str, list[str]] = {
     "willet": WILLETT_SESSIONS,
     "kunz_t12": KUNZ_T12_SESSIONS,
     "kunz_t15": KUNZ_T15_SESSIONS,
+    "wairagkar": WAIRAGKAR_SESSIONS,
+    "jude": JUDE_SESSIONS,
 }

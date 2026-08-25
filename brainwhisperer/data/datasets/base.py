@@ -34,6 +34,10 @@ class BaseNeuralDataset(Dataset):
         if self.source_dataset == "willet":
             neural_features = torch.cat([neural_features, neural_features], dim=1)
 
+        # Zero-padding for Jude dataset
+        if self.source_dataset == "jude":
+            neural_features = torch.nn.functional.pad(neural_features, (0, 256))
+
         if self.has_labels:
             seq_class_ids = self.seq_class_ids[idx]
             seq_class_ids = [

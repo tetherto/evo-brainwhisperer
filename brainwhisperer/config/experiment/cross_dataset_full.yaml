@@ -1,0 +1,22 @@
+# @package _global_
+# Full cross-dataset E2E config (paper Section 4): Card + Willett + Kunz T12/T15 +
+# Wairagkar + Jude -- the complete 6-group mixture, matching REFERENCE's `cross-ho` mode
+# (whisper-based/train.py). See WairagkarJude.md for the implementation/verification that
+# went into wairagkar.py/jude.py before this config existed.
+
+data:
+  datasets: [card, willet, kunz_t12, kunz_t15, wairagkar, jude]
+  batch_size: 128
+  days_per_batch: 8
+  embedder_overrides:
+    willet: {encodings: learnable, day_proj_rank: 0}
+    kunz_t12: {encodings: learnable, day_proj_rank: 0}
+    kunz_t15: {encodings: learnable, day_proj_rank: 0}
+    wairagkar: {encodings: learnable, day_proj_rank: 0}
+    jude: {encodings: learnable, day_proj_rank: 0}
+
+model:
+  n_embedders: 6
+
+training:
+  devices: 8
