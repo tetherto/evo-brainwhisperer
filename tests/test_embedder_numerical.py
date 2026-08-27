@@ -180,12 +180,16 @@ def loaded_embedder(ckpt_weights, session_to_contiguous_month):
     )
     emb = BWEmbedder(cfg, num_days=n_days, session_to_month=session_to_contiguous_month)
 
+    def _copy_into_paramlist(param_list, stacked_tensor):
+        for i, p in enumerate(param_list):
+            p.copy_(stacked_tensor[i])
+
     with torch.no_grad():
-        emb.proj_W_month.copy_(ckpt_weights["proj_W_month"])
-        emb.proj_b_month.copy_(ckpt_weights["proj_b_month"])
-        emb.proj_A.copy_(ckpt_weights["proj_A"])
-        emb.proj_B.copy_(ckpt_weights["proj_B"])
-        emb.proj_b_day.copy_(ckpt_weights["proj_b_day"])
+        _copy_into_paramlist(emb.proj_W_month, ckpt_weights["proj_W_month"])
+        _copy_into_paramlist(emb.proj_b_month, ckpt_weights["proj_b_month"])
+        _copy_into_paramlist(emb.proj_A, ckpt_weights["proj_A"])
+        _copy_into_paramlist(emb.proj_B, ckpt_weights["proj_B"])
+        _copy_into_paramlist(emb.proj_b_day, ckpt_weights["proj_b_day"])
         emb.conv1.weight.copy_(ckpt_weights["conv1_weight"])
         emb.conv1.bias.copy_(ckpt_weights["conv1_bias"])
         emb.conv2.weight.copy_(ckpt_weights["conv2_weight"])

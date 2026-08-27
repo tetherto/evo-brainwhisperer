@@ -104,14 +104,42 @@ class TestEmbedderInitParity:
 
     def test_proj_A_is_unscaled_randn(self):
         emb = _embedder()
-        std = emb.proj_A.std().item()
+        std = torch.stack(list(emb.proj_A)).std().item()
         assert abs(std - 1.0) < 0.1, (
             f"proj_A std={std:.4f}, expected ~1.0 (REF unscaled randn). A *0.01 scaling makes "
             f"the low-rank per-day delta (A@B, B init 0) learn ~100x slower."
         )
 
     def test_proj_B_inits_to_zero(self):
-        assert (_embedder().proj_B == 0).all(), "proj_B must init to zero"
+        assert all((p == 0).all() for p in _embedder().proj_B), "proj_B must init to zero"
+
+    def test_day_proj_params_are_independent(self):
+        """proj_W/proj_A/etc must be ParameterList (one Parameter per day), not a stacked
+        tensor: Adam applies weight_decay to any parameter with a non-None .grad, so a
+        stacked tensor gets ALL days' weights shrunk on every step even when only one
+        day appears in the batch (REF's per-day Parameters correctly get .grad=None for
+        days absent from the batch, and Adam skips them)."""
+        emb = _embedder()
+        assert isinstance(emb.proj_A, nn.ParameterList)
+        assert isinstance(emb.proj_B, nn.ParameterList)
+        assert isinstance(emb.proj_b_day, nn.ParameterList)
+        assert isinstance(emb.proj_W_month, nn.ParameterList)
+        assert isinstance(emb.proj_b_month, nn.ParameterList)
+
+        emb_full_rank = _embedder(rank=0)
+        assert isinstance(emb_full_rank.proj_W, nn.ParameterList)
+        assert isinstance(emb_full_rank.proj_b_day, nn.ParameterList)
+
+        # The defining behavior, not just the container type: a day absent from the
+        # forward pass must get grad=None, not a zero-but-present gradient.
+        x = torch.randn(2, 512, 100)
+        day_idx = torch.zeros(2, dtype=torch.long)  # only day 0 touched
+        out = emb_full_rank._apply_day_proj(x, day_idx)
+        out.sum().backward()
+        assert emb_full_rank.proj_W[0].grad is not None
+        assert emb_full_rank.proj_W[1].grad is None, (
+            "an untouched day's gradient must be None so Adam's weight_decay skips it"
+        )
 
     def test_month_weights_init_to_identity(self):
         assert torch.allclose(_embedder().proj_W_month[0], torch.eye(512))
