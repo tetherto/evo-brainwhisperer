@@ -36,12 +36,19 @@ class KunzDataset(Dataset):
         self._base = BaseNeuralDataset(
             raw, has_labels=True, source_dataset=f"kunz_{self.SUBJECT}"
         )
+        # Filter out 1-word trials and trials longer than 3000 time steps
+        self._idxs = [
+            i
+            for i in range(len(self._base))
+            if len(self._base[i]["sentence_label"].split()) > 1
+            and self._base[i]["n_time_steps"] <= 3000
+        ]
 
     def __len__(self) -> int:
-        return len(self._base)
+        return len(self._idxs)
 
     def __getitem__(self, idx: int) -> dict:
-        sample = self._base[idx]
+        sample = self._base[self._idxs[idx]]
         sample["sbj_idx"] = self._sbj_idx
         return sample
 
