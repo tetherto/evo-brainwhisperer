@@ -19,4 +19,4 @@ model:
   n_embedders: 6
 
 training:
-  devices: 8
+  devices: 2
