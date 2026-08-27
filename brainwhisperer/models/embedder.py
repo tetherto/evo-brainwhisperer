@@ -64,22 +64,37 @@ class BWEmbedder(nn.Module):
                 "session_to_month", torch.tensor(mapping, dtype=torch.long)
             )
 
+            # NOTE: Per-day/per-month params need to be ParameterLists, not stacked tensors.
+            # Adam applies `weight_decay` to every parameter with a non-None .grad (which in stacked `Parameters` tensors means all of them).
+            # Neural batches consist of few recording days' samples, but this way  the `weight_decay`
+            # shrinks untouched days on every step, instead of only on the steps that actually train them.
+            # Separate Parameters in a list correctly get .grad=None when unused.
             if r == 0:
                 # full-rank: one (C, C) weight + (C,) bias per session
-                self.proj_W = nn.Parameter(torch.zeros(num_days, C, C))
-                for i in range(num_days):
-                    nn.init.eye_(self.proj_W[i])
-                self.proj_b_day = nn.Parameter(torch.zeros(num_days, C))
+                self.proj_W = nn.ParameterList(
+                    [nn.Parameter(torch.eye(C)) for _ in range(num_days)]
+                )
+                self.proj_b_day = nn.ParameterList(
+                    [nn.Parameter(torch.zeros(C)) for _ in range(num_days)]
+                )
             else:
                 # low-rank: month-level (C, C) + (C,) bias shared within month;
                 # per-day (C, r) and (r, C) delta + (C,) bias
-                self.proj_W_month = nn.Parameter(torch.zeros(num_months, C, C))
-                for i in range(num_months):
-                    nn.init.eye_(self.proj_W_month[i])
-                self.proj_b_month = nn.Parameter(torch.zeros(num_months, C))
-                self.proj_A = nn.Parameter(torch.randn(num_days, C, r))
-                self.proj_B = nn.Parameter(torch.zeros(num_days, r, C))
-                self.proj_b_day = nn.Parameter(torch.zeros(num_days, C))
+                self.proj_W_month = nn.ParameterList(
+                    [nn.Parameter(torch.eye(C)) for _ in range(num_months)]
+                )
+                self.proj_b_month = nn.ParameterList(
+                    [nn.Parameter(torch.zeros(C)) for _ in range(num_months)]
+                )
+                self.proj_A = nn.ParameterList(
+                    [nn.Parameter(torch.randn(C, r)) for _ in range(num_days)]
+                )
+                self.proj_B = nn.ParameterList(
+                    [nn.Parameter(torch.zeros(r, C)) for _ in range(num_days)]
+                )
+                self.proj_b_day = nn.ParameterList(
+                    [nn.Parameter(torch.zeros(C)) for _ in range(num_days)]
+                )
 
         self.day_layer_dropout = nn.Dropout(cfg.day_layer_dropout)
         self.session_dropout = nn.Dropout(cfg.session_dropout)
