@@ -110,6 +110,10 @@ class VizCallback(Callback):
     # ------------------------------------------------------------------
 
     def _log_figures(self, trainer, pl_module) -> None:
+        # Non-zero ranks skip the forward pass and figure rendering
+        # rather than doing it and discarding it.
+        if not trainer.is_global_zero:
+            return
         try:
             import wandb
         except ImportError:
