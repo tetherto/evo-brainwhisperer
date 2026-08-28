@@ -190,9 +190,24 @@ def main(cfg: DictConfig) -> None:
         )
 
     # ------------------------------------------------------------------
-    # Logger: CSVLogger by default. W&B set via experiment config
+    # Logger: CSVLogger always; WandbLogger appended when cfg.wandb.enabled.
     # ------------------------------------------------------------------
-    logger = CSVLogger(save_dir=str(run_dir), name="logs")
+    logger = [CSVLogger(save_dir=str(run_dir), name="logs")]
+    if cfg.wandb.enabled:
+        from lightning.pytorch.loggers import WandbLogger
+
+        logger.append(
+            WandbLogger(
+                project=cfg.wandb.project,
+                entity=cfg.wandb.entity or None,
+                group=cfg.wandb.group or None,
+                tags=list(cfg.wandb.tags) or None,
+                name=run_dir.name,
+                save_dir=str(run_dir),
+                config=OmegaConf.to_container(cfg, resolve=True),
+                mode=cfg.wandb.mode,
+            )
+        )
 
     # ------------------------------------------------------------------
     # Save the full config (rank 0 only; all ranks share run_dir)
@@ -208,15 +223,9 @@ def main(cfg: DictConfig) -> None:
         gradient_clip_val=cfg.training.gradient_clip_val,
         # Detects if single or multi-GPU
         devices=_world_size if _world_size > 1 else cfg.training.devices,
-        # static_graph=True is only used for a single embedder (single subject),
-        # cannot be used once a step's batch can skip some embedders depending on sampled data (multi-subject).
-        strategy=(
-            DDPStrategy(static_graph=True)
-            if _world_size > 1 and cfg.model.n_embedders == 1
-            else DDPStrategy(find_unused_parameters=True)
-            if _world_size > 1
-            else "auto"
-        ),
+        strategy=DDPStrategy(find_unused_parameters=True)
+        if _world_size > 1
+        else "auto",
         # Using the custom StratifiedDayBatchSampler forces a workaround;
         # all ranks run the full validation set, redundant but correct.
         use_distributed_sampler=False,
