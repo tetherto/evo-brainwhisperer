@@ -16,7 +16,7 @@ import torch
 from brainwhisperer.config.paths import CARD_ROOT, KUNZ_ROOT
 from brainwhisperer.data.datasets.base import BaseNeuralDataset
 
-_KUNZ_BASE = "data/kunz_dataset_for_BaseNeuralTextDataset/padded_feature_dim"
+_KUNZ_BASE = "data/kunz_dataset_for_BaseNeuralTextDataset/sentenceData_eval_split"
 N_SAMPLES = 20  # number of consecutive indices checked per dataset
 
 

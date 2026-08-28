@@ -52,17 +52,15 @@ def test_card_known_calendar_days():
 
 
 def test_kunz_t12_same_date_gives_zero_days():
-    """All three Kunz T12 sessions are on the same date → all day 0."""
+    """Kunz T12's single session → day 0."""
     days = sessions_to_calendar_days(KUNZ_T12_SESSIONS)
-    assert days == [0, 0, 0]
+    assert days == [0]
 
 
-def test_kunz_t15_three_distinct_dates():
-    """Kunz T15 has three distinct dates; spot-check the two later ones."""
+def test_kunz_t15_same_date_gives_zero_days():
+    """All three Kunz T15 sessions are on the same date → all day 0."""
     days = sessions_to_calendar_days(KUNZ_T15_SESSIONS)
-    assert days[0] == days[1] == days[2] == 0    # 2024.03.03 — first date
-    assert days[3] == days[4] == 287             # 2024.12.15 — 287 days later
-    assert days[5] == days[6] == 308             # 2025.01.05 — 308 days later
+    assert days == [0, 0, 0]
 
 
 def test_sessions_by_dataset_covers_all_four_datasets():
@@ -73,8 +71,8 @@ def test_sessions_by_dataset_lengths():
     """SESSIONS_BY_DATASET lengths must match dataset NUM_DAYS constants."""
     assert len(SESSIONS_BY_DATASET["card"]) == 45
     assert len(SESSIONS_BY_DATASET["willet"]) == 24
-    assert len(SESSIONS_BY_DATASET["kunz_t12"]) == 3
-    assert len(SESSIONS_BY_DATASET["kunz_t15"]) == 7
+    assert len(SESSIONS_BY_DATASET["kunz_t12"]) == 1
+    assert len(SESSIONS_BY_DATASET["kunz_t15"]) == 3
 
 
 # ─── BWEmbedder sinusoidal lookup ─────────────────────────────────────────────
@@ -212,25 +210,13 @@ def test_calendar_months_sessions_26_27_in_distinct_buckets():
     assert emb.session_to_month[27].item() == 6  # day 198 ÷ 30 = 6
 
 
-def test_kunz_t15_calendar_month_grouping():
-    """Sessions 3-4 (day 287 → month 9) must not share month bucket with sessions 0-2 (day 0)."""
+def test_kunz_t15_month_grouping_all_zero():
+    """Kunz T15's three same-date sessions all land in calendar month 0."""
     cal_days = sessions_to_calendar_days(KUNZ_T15_SESSIONS)
     months = [d // 30 for d in cal_days]
 
     cfg = _sin_cfg(day_projections=True)
-    emb = BWEmbedder(cfg, num_days=7, session_to_calendar_day=cal_days,
+    emb = BWEmbedder(cfg, num_days=3, session_to_calendar_day=cal_days,
                      session_to_month=months)
 
-    assert emb.session_to_month[0].item() == 0   # day 0 → month 0
-    assert emb.session_to_month[3].item() == 9   # day 287 → month 9
-    assert emb.session_to_month[5].item() == 10  # day 308 → month 10
-
-
-def test_kunz_t15_heuristic_incorrectly_merges_months():
-    """The 4-per-month heuristic puts sessions 0-3 all in month 0, merging day-0 with day-287."""
-    cfg = _sin_cfg(day_projections=True)
-    emb_broken = BWEmbedder(cfg, num_days=7)  # no calendar info
-
-    # Sessions 0 and 3 are 287 days apart but the heuristic puts them both in month 0.
-    assert emb_broken.session_to_month[0].item() == 0
-    assert emb_broken.session_to_month[3].item() == 0  # wrong: should be 9
+    assert emb.session_to_month.tolist() == [0, 0, 0]

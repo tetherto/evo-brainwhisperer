@@ -77,9 +77,8 @@ WILLETT_SESSIONS = [
     "t12.2022.08.25",
 ]
 
+# Placeholder only.
 KUNZ_T12_SESSIONS = [
-    "t12.2023.11.28",
-    "t12.2023.11.28",
     "t12.2023.11.28",
 ]
 
@@ -87,10 +86,6 @@ KUNZ_T15_SESSIONS = [
     "t15.2024.03.03",
     "t15.2024.03.03",
     "t15.2024.03.03",
-    "t15.2024.12.15",
-    "t15.2024.12.15",
-    "t15.2025.01.05",
-    "t15.2025.01.05",
 ]
 
 # Placeholder only. These 10 arbitrary-but-parseable dates exist only to satisfy
