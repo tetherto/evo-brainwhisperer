@@ -80,7 +80,7 @@ def submit_slurm(cfg: BWConfig, *, dry_run: bool = False) -> None:
     overrides = _task_overrides()
     override_str = " ".join(shlex.quote(o) for o in overrides)
 
-    required_vars = ["CARD_ROOT", "KUNZ_ROOT", "WILLET_CODE", "RNN_ARGS"]
+    required_vars = ["CARD_ROOT", "KUNZ_ROOT", "WILLET_CODE", "RNN_ARGS", "WANDB_API_KEY"]
     env_exports = "\n".join(
         f"export {k}={shlex.quote(os.environ[k])}"
         for k in required_vars
