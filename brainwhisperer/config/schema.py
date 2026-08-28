@@ -114,6 +114,16 @@ class BWVizConfig:
 
 
 @dataclass
+class BWWandbConfig:
+    enabled: bool = False
+    project: str = "brainwhisperer"
+    entity: str = ""  # blank = wandb account default; set per-team/experiment
+    group: str = ""  # e.g. "cross_dataset" 
+    tags: list[str] = field(default_factory=list)
+    mode: str = "online"  # "online" | "offline" | "disabled"
+
+
+@dataclass
 class BWGenerationConfig:
     """
     Beam search kwargs passed to BrainWhisperer.generate() at eval time.
@@ -122,7 +132,7 @@ class BWGenerationConfig:
     """
 
     num_beams: int = MISSING
-    num_beam_groups: int = MISSING  # diversity-promoting Group Beam Search
+    num_beam_groups: int = MISSING
     length_penalty: float = MISSING
     repetition_penalty: float = MISSING
     no_repeat_ngram_size: int = MISSING
@@ -136,6 +146,7 @@ class BWConfig:
     training: BWTrainingConfig = field(default_factory=BWTrainingConfig)
     generation: BWGenerationConfig = field(default_factory=BWGenerationConfig)
     viz: BWVizConfig = field(default_factory=BWVizConfig)
+    wandb: BWWandbConfig = field(default_factory=BWWandbConfig)
 
 
 _cs = ConfigStore.instance()

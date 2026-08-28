@@ -85,3 +85,11 @@ generation:
 viz:
   enabled: false
   log_every_n_epochs: 5
+
+wandb:
+  enabled: false
+  project: brainwhisperer
+  entity: ""
+  group: ""
+  tags: []
+  mode: online
