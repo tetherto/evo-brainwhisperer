@@ -183,6 +183,18 @@ def main(cfg: DictConfig) -> None:
         ),
     ]
 
+    # PER-selected checkpoint, for cascaded CTC+LM decoding (LightBeam)
+    if cfg.training.ctc_phone_coeff > 0.0:
+        callbacks.append(
+            ModelCheckpoint(
+                dirpath=ckpt_dir,
+                monitor=f"val_per_{val_names[0]}",
+                mode="min",
+                save_top_k=1,
+                filename="best-per-{epoch:04d}",
+            )
+        )
+
     if cfg.viz.enabled:
         held_out = next(iter(val_dataloaders[0]))
         callbacks.append(
