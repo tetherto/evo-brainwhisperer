@@ -17,3 +17,17 @@ WILLETT_ROOT = _require("WILLETT_ROOT")
 RNN_ARGS = _require("RNN_ARGS")
 JUDE_PATH = _require("JUDE_PATH")
 WAIRAGKAR_ROOT = _require("WAIRAGKAR_ROOT")
+
+# Required paths for cascaded CTC+LLM decoding eval only,
+# not the training pipeline or E2E
+_LIGHTBEAM_ONLY_VARS = {
+    "BRAINAUDIO_ROOT",
+    "LIGHTBEAM_KENLM_PATH",
+    "LIGHTBEAM_ADAPTER_PATH",
+}
+
+
+def __getattr__(name: str) -> str:
+    if name in _LIGHTBEAM_ONLY_VARS:
+        return _require(name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
