@@ -1,0 +1,95 @@
+defaults:
+  - base_config
+  - _self_
+  - optional experiment: null
+
+model:
+  whisper_name: openai/whisper-tiny.en
+  n_embedders: 1
+  whisper_dropout: 0.1  # decoder-only dropout
+  embedder:
+    num_features: 512
+    d_model: 384        # whisper-tiny.en encoder/decoder hidden size
+    embed_type: conv
+    kernel_size_1: 7
+    stride_2: 2
+    patch_size: 5
+    encodings: sin
+    day_projections: true
+    day_proj_rank: 16
+    dropout: 0.4              # for patch-mode only
+    day_layer_dropout: 0.2    # applied after day projection
+    session_dropout: 0.1      # default dropout session encoding
+  encoder:
+    n_layers: 6
+    n_heads: 6
+    d_model: 384
+    d_ff: 1536
+    dropout: 0.1
+    last_phoneme_layer: 3
+    attn_window_size: 57
+    max_source_pos: 1500  # embedder output len
+    temporal_pe_std: 0.02
+    rope: false
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.0    # matching peft's default lora_dropout=0.0 (never set)
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - out_proj
+      - fc1
+      - fc2
+
+data:
+  datasets:
+    - card
+  batch_size: 64
+  num_workers: 4
+  max_seq_len: 448
+  days_per_batch: 4
+
+training:
+  max_epochs: 200
+  lr: 1.0e-3
+  lr_min: 1.0e-5
+  weight_decay: 1.0e-5
+  gradient_clip_val: 0.0
+  ce_coeff: 1.0
+  ctc_phone_coeff: 1.0
+  ctc_char_coeff: 0.0
+  scheduler: cosine
+  seed: 1
+  matmul_precision: high    # highest (fp32) | high (TF32) | medium (bf16)
+  augmentation:
+    gain_std: 0.0
+    noise_std: 1.0
+    offset_std: 0.2
+    walk_std: 0.0
+    max_cut: 3
+    smooth_kernel_size: 100
+    smooth_sigma: 2.0
+    num_masks: 10
+    max_mask_pct: 0.075
+
+generation:
+  num_beams: 4
+  num_beam_groups: 2
+  length_penalty: 0.14
+  repetition_penalty: 1.16
+  no_repeat_ngram_size: 0
+  diversity_penalty: 0.25
+
+viz:
+  enabled: false
+  log_every_n_epochs: 5
+
+wandb:
+  enabled: false
+  project: brainwhisperer
+  entity: ""
+  group: ""
+  tags: []
+  mode: online

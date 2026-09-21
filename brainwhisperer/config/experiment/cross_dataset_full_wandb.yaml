@@ -1,0 +1,27 @@
+# @package _global_
+# Same as cross_dataset_full.yaml with W&B logging turned on.
+
+data:
+  datasets: [card, willet, kunz_t12, kunz_t15, wairagkar, jude]
+  batch_size: 128
+  days_per_batch: 8
+  embedder_overrides:
+    willet: {encodings: learnable, day_proj_rank: 0}
+    kunz_t12: {encodings: learnable, day_proj_rank: 0}
+    kunz_t15: {encodings: learnable, day_proj_rank: 0}
+    wairagkar: {encodings: learnable, day_proj_rank: 0}
+    jude: {encodings: learnable, day_proj_rank: 0}
+
+model:
+  n_embedders: 6
+
+training:
+  devices: 2
+
+wandb:
+  enabled: true
+  project: brainwhisperer
+  entity: ""  # singe wandb account default; override if using a shared org/entity
+  group: cross_dataset_full  # clusters every seed of this experiment together in the W&B UI
+  tags: [cross_dataset_full]
+  mode: online

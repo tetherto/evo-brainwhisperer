@@ -1,0 +1,6 @@
+# Font files are proprietary — do not commit.
+# Drop Sharp Grotesk OTF/TTF files here; load_theme() registers them automatically.
+*.otf
+*.ttf
+*.woff
+*.woff2
