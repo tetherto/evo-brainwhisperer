@@ -26,11 +26,10 @@ class KunzDataset(Dataset):
     NUM_DAYS: int  # set by subclasses
     VAL_SPLIT: str = "val"
 
-    def __init__(self, split: str = "train", sbj_idx: int = 0):
+    def __init__(self, split: str = "train"):
         splits = _SPLITS[self.SUBJECT]
         if split not in splits:
             raise ValueError(f"split must be one of {list(splits)}, got {split!r}")
-        self._sbj_idx = sbj_idx
         self._split = split
         path = f"{KUNZ_ROOT}/{splits[split]}"
         with open(path, "rb") as f:
@@ -54,9 +53,13 @@ class KunzDataset(Dataset):
             return sample
         n = sample["n_time_steps"] // 2
         seg = sample["neural_features"]
-        seg = F.interpolate(
-            seg.T.unsqueeze(0), size=n, mode="linear", align_corners=False
-        ).squeeze().T
+        seg = (
+            F.interpolate(
+                seg.T.unsqueeze(0), size=n, mode="linear", align_corners=False
+            )
+            .squeeze()
+            .T
+        )
         sample["neural_features"] = seg
         sample["n_time_steps"] = n
         return sample
@@ -66,7 +69,7 @@ class KunzDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict:
         sample = self._postprocess(self._base[self._idxs[idx]])
-        sample["sbj_idx"] = self._sbj_idx
+        sample["dataset"] = self.NAME
         return sample
 
 

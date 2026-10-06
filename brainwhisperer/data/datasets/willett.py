@@ -20,10 +20,9 @@ class WilletDataset(Dataset):
     NUM_DAYS: int = len(WILLETT_SESSIONS)
     VAL_SPLIT: str = "test"  # Willet has no "val" split; use test for validation
 
-    def __init__(self, split: str = "train", sbj_idx: int = 0):
+    def __init__(self, split: str = "train"):
         if split not in _SPLITS:
             raise ValueError(f"split must be one of {list(_SPLITS)}, got {split!r}")
-        self._sbj_idx = sbj_idx
         path = f"{CARD_ROOT}/{_SPLITS[split]}"
         with open(path, "rb") as f:
             raw = pickle.load(f)
@@ -37,5 +36,5 @@ class WilletDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict:
         sample = self._base[idx]
-        sample["sbj_idx"] = self._sbj_idx
+        sample["dataset"] = self.NAME
         return sample

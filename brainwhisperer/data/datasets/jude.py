@@ -39,10 +39,9 @@ class JudeDataset(Dataset):
     NUM_DAYS: int = 5
     VAL_SPLIT: str = "val"
 
-    def __init__(self, split: str = "train", sbj_idx: int = 0):
+    def __init__(self, split: str = "train"):
         if split not in ("train", "val"):
             raise ValueError(f"split must be 'train' or 'val', got {split!r}")
-        self._sbj_idx = sbj_idx
         with open(JUDE_PATH, "rb") as f:
             raw = pickle.load(f)
         days = np.array(raw["dayIdx"])
@@ -55,5 +54,5 @@ class JudeDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict:
         sample = self._base[self._idxs[idx]]
-        sample["sbj_idx"] = self._sbj_idx
+        sample["dataset"] = self.NAME
         return sample
