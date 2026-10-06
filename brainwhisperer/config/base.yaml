@@ -59,7 +59,6 @@ training:
   gradient_clip_val: 0.0
   ce_coeff: 1.0
   ctc_phone_coeff: 1.0
-  ctc_char_coeff: 0.0
   scheduler: cosine
   seed: 1
   matmul_precision: high    # highest (fp32) | high (TF32) | medium (bf16)
