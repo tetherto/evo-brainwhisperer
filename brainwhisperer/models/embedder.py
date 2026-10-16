@@ -40,7 +40,6 @@ class BWEmbedder(nn.Module):
         super().__init__()
         self.embed_type = cfg.embed_type
         self.d_model = cfg.d_model
-        self.ref_half_layout = cfg.ref_half_layout  # DEBUG
         self.num_features = cfg.num_features
         self.stride_2 = cfg.stride_2
         self.day_projections = cfg.day_projections
@@ -232,14 +231,7 @@ class BWEmbedder(nn.Module):
         )
         day_enc = self.session_dropout(self.day_encoding(positions))  # (B, d_model//2)
         half = self.d_model // 2
-        # DEBUG
-        if self.ref_half_layout:
-            # REF convention (pre-refactor/model.py:1105): session enc on LAST half.
-            left = x[:, :, :half]
-            right = x[:, :, half:] + day_enc.unsqueeze(1)
-        else:
-            left = x[:, :, :half] + day_enc.unsqueeze(
-                1
-            )  # session encoding on first half
-            right = x[:, :, half:]  # the encoder applies temporal encoding on this half
+        # Session encoding on the first half; temporal PE to the last half.
+        left = x[:, :, :half] + day_enc.unsqueeze(1)
+        right = x[:, :, half:]
         return torch.cat([left, right], dim=-1)
