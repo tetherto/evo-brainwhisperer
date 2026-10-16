@@ -80,15 +80,6 @@ class BWLightningModule(LightningModule):
         self._val_edit_phones: list[int] = [0] * N
         self._val_len_phones: list[int] = [0] * N
 
-        # char-head CTC tokenizer (only constructed if ctc_char_coeff > 0)
-        self._char_tokenizer = None
-        if cfg.ctc_char_coeff > 0.0:
-            from transformers import AutoProcessor
-
-            self._char_tokenizer = AutoProcessor.from_pretrained(
-                "patrickvonplaten/wav2vec2-base"
-            ).tokenizer
-
     # ------------------------------------------------------------------
     # Optimiser + scheduler
     # ------------------------------------------------------------------
@@ -122,14 +113,6 @@ class BWLightningModule(LightningModule):
             param_groups.append(
                 {
                     "params": self.model.phone_head.parameters(),
-                    "lr": self.cfg.lr,
-                    "weight_decay": self.cfg.weight_decay,
-                }
-            )
-        if self.cfg.ctc_char_coeff > 0.0:
-            param_groups.append(
-                {
-                    "params": self.model.char_head.parameters(),
                     "lr": self.cfg.lr,
                     "weight_decay": self.cfg.weight_decay,
                 }
@@ -202,7 +185,7 @@ class BWLightningModule(LightningModule):
         clean_batch = NeuralBatch(
             signals=x_clean,
             labels=batch.labels,
-            sbj_idx=batch.sbj_idx,
+            datasets=batch.datasets,
             day_idx=batch.day_idx,
             lengths=batch.lengths,
         )
@@ -229,7 +212,7 @@ class BWLightningModule(LightningModule):
         aug_batch = NeuralBatch(
             signals=x_aug,
             labels=batch.labels,
-            sbj_idx=batch.sbj_idx,
+            datasets=batch.datasets,
             day_idx=batch.day_idx,
             lengths=len_cut,
         )
@@ -244,24 +227,6 @@ class BWLightningModule(LightningModule):
             )
             self.log("train_ctc_phone_loss", phone_loss, prog_bar=True)
             loss = loss + self.cfg.ctc_phone_coeff * phone_loss
-
-        if self.cfg.ctc_char_coeff > 0.0 and self._char_tokenizer is not None:
-            target_texts = self._labels_to_text(batch.labels)
-            char_out = self._char_tokenizer(
-                [t.upper() for t in target_texts],
-                return_tensors="pt",
-                padding=True,
-            )
-            y_char = char_out["input_ids"].to(self.device)
-            y_char_len = char_out["attention_mask"].sum(-1).to(self.device)
-            char_loss = ctc_loss(
-                logits=out_aug["char_logits"],
-                targets=y_char,
-                input_lengths=out_aug["x_len"],
-                target_lengths=y_char_len,
-            )
-            self.log("train_ctc_char_loss", char_loss, prog_bar=True)
-            loss = loss + self.cfg.ctc_char_coeff * char_loss
 
         self.log("train_loss", loss, prog_bar=False)
         return loss
@@ -279,7 +244,7 @@ class BWLightningModule(LightningModule):
         val_batch = NeuralBatch(
             signals=x_val,
             labels=batch.labels,
-            sbj_idx=batch.sbj_idx,
+            datasets=batch.datasets,
             day_idx=batch.day_idx,
             lengths=len_val,
         )

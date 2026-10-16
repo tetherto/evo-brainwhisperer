@@ -23,8 +23,8 @@ def ctc_loss(
     Applies log_softmax and the (T, B, n_classes) permutation required by PyTorch's CTCLoss.
 
     Args:
-        logits:         (B, T_ctc, n_classes) — pre-softmax scores from phone_head or char_head;
-                        n_classes is 41 for phonemes or vocab_size for characters.
+        logits:         (B, T_ctc, n_classes) — pre-softmax scores from phone_head;
+                        n_classes is 41 for the CMU phoneme set.
         targets:        (B, S) — target token sequences; class 0 is reserved for blank.
         input_lengths:  (B,)  — valid CTC frames per sample (out["x_len"]).
         target_lengths: (B,)  — actual target sequence lengths.
