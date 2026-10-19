@@ -1,8 +1,8 @@
 """Pinned held-out val trials for Wairagkar and Jude.
 
 The splits used for the published results were pseudo-random dice rolls
-reproducible only under the old pickle loading pipeline (the one original adopted by the model,
-now swapped for one based on NeuralSet).
+reproducible only under the old pickle loading pipeline
+(the one original adopted by the model, now swapped for one based on NeuralSet).
 These JSON files pin the resuxlting held-out trials for the sake of reproducibility.
 """
 
