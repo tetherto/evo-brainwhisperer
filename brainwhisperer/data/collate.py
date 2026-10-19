@@ -2,10 +2,10 @@ from dataclasses import replace
 
 from tether_scratch.dataloader import PadSpec, RaggedCollator
 
+from brainwhisperer.data.adapter import to_mixed_neural_batch, to_neural_batch
 from brainwhisperer.data.batch import NeuralBatch
 from brainwhisperer.data.collection import MEMBER
 from brainwhisperer.data.fields import DAY, NEURAL, PHONEMES, WHISPER
-from brainwhisperer.data.neuralset_adapter import to_mixed_neural_batch
 from brainwhisperer.utils.fill import fill_to_num_features
 
 
@@ -23,7 +23,7 @@ def default_ragged_collator() -> RaggedCollator:
     )
 
 
-class MixedNeuralCollator:
+class MixedRecipeCollator:
     """Collates one batch of the mixed-dataset collection into a NeuralBatch.
 
     Each row's member (from `MixedRaggedDataset`'s metadata) picks both the
@@ -49,7 +49,7 @@ class MixedNeuralCollator:
 
     def __call__(self, batch: list) -> NeuralBatch:
         if not batch:
-            raise ValueError("MixedNeuralCollator received an empty batch")
+            raise ValueError("MixedRecipeCollator received an empty batch")
         filled = []
         for sample in batch:
             name = sample.metadata[MEMBER]
@@ -77,4 +77,28 @@ class MixedNeuralCollator:
             whisper=self.WHISPER,
             phonemes=self.PHONEMES,
             day=self.DAY,
+        )
+
+
+class SingleRecipeCollator:
+    """Collates batches that all belong to ONE recipe into a NeuralBatch.
+
+    The counterpart of `MixedRecipeCollator`: this batch holds a single
+    dataset, so the name is fixed at construction and no per-row
+    `CHANNEL_FILL` is needed (one recipe has one width).
+    """
+
+    def __init__(self, dataset_name: str, recipe, collator: RaggedCollator) -> None:
+        self._name = dataset_name
+        self._recipe = recipe
+        self._collator = collator
+
+    def __call__(self, samples) -> NeuralBatch:
+        return to_neural_batch(
+            self._collator(samples),
+            self._name,
+            neural=self._recipe.NEURAL,
+            whisper=self._recipe.WHISPER,
+            phonemes=self._recipe.PHONEMES,
+            day=self._recipe.DAY,
         )
