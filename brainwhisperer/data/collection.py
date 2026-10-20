@@ -10,7 +10,7 @@ from dataclasses import replace
 import pandas as pd
 import torch
 
-from brainwhisperer.data.recipes import RECIPES
+from brainwhisperer.data.recipes import RECIPES, build_in_parallel
 
 MEMBER = "member"
 
@@ -102,7 +102,7 @@ def build_train_collection(
     names: Sequence[str], max_label_len: int
 ) -> MixedRaggedDataset:
     """The different train recipes as one sampler-ready dataset."""
-    datasets = {
-        name: RECIPES[name].build_train_dataset(max_label_len) for name in names
-    }
+    datasets = build_in_parallel(
+        names, lambda name: RECIPES[name].build_train_dataset(max_label_len)
+    )
     return MixedRaggedDataset(datasets)

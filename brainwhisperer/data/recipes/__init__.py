@@ -10,6 +10,8 @@ consume). `train.py`/`eval.py`/`eval_lightbeam.py` reach every dataset
 through this registry.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+
 from brainwhisperer.data.recipes.base import Recipe
 from brainwhisperer.data.recipes.card import CardRecipe
 from brainwhisperer.data.recipes.jude import JudeRecipe
@@ -27,4 +29,25 @@ RECIPES: dict[str, Recipe] = {
     "jude": JudeRecipe(),
 }
 
-__all__ = ["RECIPES", "Recipe"]
+
+def build_in_parallel(names, build, max_workers=None):
+    """Build one dataset per recipe name, concurrently.
+
+    Dataset preparation dominates start-up, threading it
+    greatly reduces training time.
+
+    Args:
+        names: dataset names to build.
+        build: callable mapping one name to its prepared dataset.
+        max_workers: defaults to one thread per name.
+
+    Returns:
+        `{name: dataset}`; exceptions from `build` propagate.
+    """
+    names = list(names)
+    with ThreadPoolExecutor(max_workers=max_workers or len(names)) as pool:
+        futures = {name: pool.submit(build, name) for name in names}
+        return {name: future.result() for name, future in futures.items()}
+
+
+__all__ = ["RECIPES", "Recipe", "build_in_parallel"]
