@@ -25,20 +25,20 @@ from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 from transformers import WhisperTokenizer
 
-import brainwhisperer.config.schema
-import brainwhisperer.data.datasets  # noqa: F401
 from brainwhisperer.config.paths import (
     BRAINAUDIO_ROOT,
     LIGHTBEAM_ADAPTER_PATH,
     LIGHTBEAM_KENLM_PATH,
 )
+from brainwhisperer.data.collate import (
+    SingleRecipeCollator,
+    default_ragged_collator,
+)
 from brainwhisperer.config.schema import BWConfig
-from brainwhisperer.data.batch import NeuralBatch
-from brainwhisperer.data.collate import NeuralCollator
-from brainwhisperer.data.registry import get_dataset
+from brainwhisperer.data.recipes import RECIPES
 from brainwhisperer.models.model import BrainWhisperer
+from brainwhisperer.prediction import reference_texts
 from brainwhisperer.utils.metrics import word_error_rate
-from brainwhisperer.utils.sessions import SESSIONS_BY_DATASET, sessions_to_calendar_days
 from brainwhisperer.utils.text import remove_punctuation
 
 
@@ -256,43 +256,42 @@ def main() -> None:
     tokenizer = WhisperTokenizer.from_pretrained(
         cfg.model.whisper_name, language="en", task="transcribe"
     )
-    collator = NeuralCollator(tokenizer, max_label_len=cfg.data.max_seq_len)
 
-    dataset_classes = [get_dataset(name) for name in cfg.data.datasets]
-    num_days_per_embedder = [cls.NUM_DAYS for cls in dataset_classes]
+    # Model-shape metadata (day-axis size, calendar days) comes from the recipes.
+    num_days_per_embedder = [RECIPES[name].NUM_DAYS for name in cfg.data.datasets]
     calendar_days_per_embedder = [
-        sessions_to_calendar_days(SESSIONS_BY_DATASET[name])
-        for name in cfg.data.datasets
+        RECIPES[name].calendar_days() for name in cfg.data.datasets
     ]
     embedder_cfg_per_embedder = [
         OmegaConf.merge(cfg.model.embedder, cfg.data.embedder_overrides.get(name, {}))
         for name in cfg.data.datasets
     ]
 
-    card_idx = list(cfg.data.datasets).index("card")
-    card_cls = dataset_classes[card_idx]
-    val_ds = card_cls(split=card_cls.VAL_SPLIT, sbj_idx=card_idx)
+    # Card's val trials from the recipe; the collator hands the loop
+    # ready-made NeuralBatches (Card has no CHANNEL_FILL rule, so the
+    # model is built without fills).
+    val_ds = RECIPES["card"].build_val_dataset(max_label_len=cfg.data.max_seq_len)
     if args.limit:
         from torch.utils.data import Subset
 
         val_ds = Subset(val_ds, range(min(args.limit, len(val_ds))))
     val_loader = DataLoader(
-        val_ds, batch_size=args.decoder_batch_size, collate_fn=collator, shuffle=False
+        val_ds,
+        batch_size=args.decoder_batch_size,
+        collate_fn=SingleRecipeCollator(
+            "card", RECIPES["card"], default_ragged_collator()
+        ),
+        shuffle=False,
     )
 
     model = BrainWhisperer(
         cfg.model,
+        list(cfg.data.datasets),
         num_days_per_embedder,
         calendar_days_per_embedder,
         embedder_cfg_per_embedder,
     )
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    state = {
-        k.removeprefix("model."): v
-        for k, v in ckpt["state_dict"].items()
-        if k.startswith("model.")
-    }
-    model.load_state_dict(state)
+    model.load_checkpoint(args.checkpoint)
     model = model.to(device)
     model.eval()
 
@@ -302,19 +301,11 @@ def main() -> None:
     all_logits, all_lens, targets = [], [], []
     with torch.no_grad():
         for batch in val_loader:
-            batch = NeuralBatch(
-                signals=batch.signals.to(device),
-                labels=batch.labels.to(device),
-                sbj_idx=batch.sbj_idx.to(device),
-                day_idx=batch.day_idx.to(device),
-                lengths=batch.lengths.to(device),
-            )
+            batch = batch.to_device(device)
             out = model(batch, encoder_only=True)
             all_logits.append(out["phone_logits"].cpu())
             all_lens.append(out["x_len"].cpu())
-            label_ids = batch.labels.clone()
-            label_ids[label_ids == -100] = tokenizer.pad_token_id
-            targets += tokenizer.batch_decode(label_ids, skip_special_tokens=True)
+            targets += reference_texts(batch.labels, tokenizer)
 
     logits = torch.cat(all_logits).to(device)
     lens = torch.cat(all_lens).to(device)

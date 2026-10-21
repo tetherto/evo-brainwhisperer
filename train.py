@@ -11,18 +11,21 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.strategies import DDPStrategy
 from omegaconf import DictConfig, OmegaConf
-from torch.utils.data import ConcatDataset, DataLoader
+from tether_scratch.dataloader import StratifiedBatchSampler
+from torch.utils.data import DataLoader
 from transformers import WhisperTokenizer
 
 import brainwhisperer.config.schema
-import brainwhisperer.data.datasets  # noqa: F401 - unused in this script but triggers dataset registration
-from brainwhisperer.data.collate import NeuralCollator
-from brainwhisperer.data.registry import get_dataset
-from brainwhisperer.data.samplers import StratifiedDayBatchSampler
+from brainwhisperer.data.collate import (
+    MixedRecipeCollator,
+    SingleRecipeCollator,
+    default_ragged_collator,
+)
+from brainwhisperer.data.collection import build_train_collection
+from brainwhisperer.data.recipes import RECIPES, build_in_parallel
 from brainwhisperer.models.model import BrainWhisperer
 from brainwhisperer.training.callbacks import UnfreezeWhisperDecoder, VizCallback
 from brainwhisperer.training.lightning_module import BWLightningModule
-from brainwhisperer.utils.sessions import SESSIONS_BY_DATASET, sessions_to_calendar_days
 
 
 def _needs_torchrun(devices: int) -> bool:
@@ -36,6 +39,7 @@ def _needs_torchrun(devices: int) -> bool:
 
 @hydra.main(config_path="brainwhisperer/config", config_name="base", version_base="1.3")
 def main(cfg: DictConfig) -> None:
+    # Unused config here; serving as guard throwing errors on missing values
     OmegaConf.to_container(cfg, throw_on_missing=True)
 
     # ------------------------------------------------------------------
@@ -44,11 +48,22 @@ def main(cfg: DictConfig) -> None:
     if _needs_torchrun(cfg.training.devices):
         run_dir = HydraConfig.get().runtime.output_dir
         overrides = list(HydraConfig.get().overrides.task)
+        # torchrun's static rendezvous always binds port 29500 unless told
+        # otherwise, so a second concurrent multi-GPU run dies immediately
+        # with EADDRINUSE (seen on 2026-10-19 launching 4 seeds). Honour
+        # MASTER_PORT when the caller sets one; leave torchrun's default
+        # alone otherwise, so single runs are untouched.
+        port_args = (
+            [f"--master_port={os.environ['MASTER_PORT']}"]
+            if "MASTER_PORT" in os.environ
+            else []
+        )
         cmd = [
             sys.executable,
             "-m",
             "torch.distributed.run",
             f"--nproc_per_node={cfg.training.devices}",
+            *port_args,
             os.path.abspath(__file__),
             *overrides,
             f"hydra.run.dir={run_dir}",
@@ -82,73 +97,101 @@ def main(cfg: DictConfig) -> None:
         f"days_per_batch ({cfg.data.days_per_batch}) must be divisible by "
         f"world size ({_world_size})"
     )
-    _per_rank_days = cfg.data.days_per_batch // _world_size
 
     # Validate dataset and embedder counts match
     assert len(cfg.data.datasets) == cfg.model.n_embedders, (
         f"The number of datasets ({len(cfg.data.datasets)}) must equal "
         f"the number of embedders ({cfg.model.n_embedders}). "
-        f"Each entry in data.datasets maps to one BWEmbedder at its list position."
+        f"Each entry in data.datasets gets its own BWEmbedder, keyed by name."
     )
 
     # ------------------------------------------------------------------
-    # Tokenizer + collator
+    # Tokenizer
     # ------------------------------------------------------------------
     tokenizer = WhisperTokenizer.from_pretrained(
         cfg.model.whisper_name, language="en", task="transcribe"
     )
-    collator = NeuralCollator(tokenizer, max_label_len=cfg.data.max_seq_len)
 
     # ------------------------------------------------------------------
     # Datasets
     #
-    # String position in cfg.data.datasets assing the `sbj_idx` to each dataset used.
-    # The value is constructed with the index that matches its position so that
-    # BrainWhisperer.embedders[i] always handles the dataset at position i.
+    # Each recipe carries the model-shape metadata (NUM_DAYS, CHANNEL_FILL)
+    # and tags its samples with its registered name. The model keys its
+    # embedders by that name (BrainWhisperer.embedders[name]), so the
+    # position in the config list never decides which embedder handles a
+    # dataset.
     # ------------------------------------------------------------------
-    dataset_classes = [get_dataset(name) for name in cfg.data.datasets]
-    num_days_per_embedder = [cls.NUM_DAYS for cls in dataset_classes]
+    num_days_per_embedder = [RECIPES[name].NUM_DAYS for name in cfg.data.datasets]
+    # Per-day calendar metadata (day-encoding positions / month buckets),
+    # derived from the tether_scratch session rules. Whether the embedder
+    # uses it depends on its config (see BrainWhisperer.__init__).
     calendar_days_per_embedder = [
-        sessions_to_calendar_days(SESSIONS_BY_DATASET[name])
-        for name in cfg.data.datasets
+        RECIPES[name].calendar_days() for name in cfg.data.datasets
     ]
     # Per-dataset override of model.embedder
     embedder_cfg_per_embedder = [
         OmegaConf.merge(cfg.model.embedder, cfg.data.embedder_overrides.get(name, {}))
         for name in cfg.data.datasets
     ]
+    # Fill-to-512 rule per dataset: applied at
+    # collation time for the mixed training batches (before the training-step
+    # augmentations mix channels) and in the model's eval-mode forwards for
+    # the validation batches.
+    channel_fills_per_embedder = [
+        RECIPES[name].CHANNEL_FILL for name in cfg.data.datasets
+    ]
     val_names = list(cfg.data.datasets)
 
-    train_datasets, val_dataloaders = [], []
-    for i, cls in enumerate(dataset_classes):
-        train_datasets.append(cls(split="train", sbj_idx=i))
-        val_ds = cls(split=cls.VAL_SPLIT, sbj_idx=i)
-        val_dataloaders.append(
-            DataLoader(
-                val_ds,
-                batch_size=_per_rank_batch,
-                collate_fn=collator,
-                num_workers=cfg.data.num_workers,
-                shuffle=False,
-            )
+    # Prepared independently per dataset, so the six builds overlap instead
+    # of queueing (see build_in_parallel). DataLoaders are cheap and stay
+    # sequential; order follows val_names so metrics keep their names.
+    val_datasets = build_in_parallel(
+        val_names,
+        lambda name: RECIPES[name].build_val_dataset(
+            max_label_len=cfg.data.max_seq_len
+        ),
+    )
+    val_dataloaders = [
+        DataLoader(
+            val_datasets[name],
+            batch_size=_per_rank_batch,
+            collate_fn=SingleRecipeCollator(
+                name, RECIPES[name], default_ragged_collator()
+            ),
+            num_workers=cfg.data.num_workers,
+            shuffle=False,
         )
+        for name in val_names
+    ]
 
     # ------------------------------------------------------------------
     # Training DataLoader
     # ------------------------------------------------------------------
-    train_combined = ConcatDataset(train_datasets)
-    train_sampler = StratifiedDayBatchSampler(
-        train_combined,
-        batch_size=_per_rank_batch,
-        days_per_batch=_per_rank_days,
-        rank=_rank,
-        world_size=_world_size,
+    # The six train recipes as one collection, sampled by the
+    # tether_scratch sampler: each global batch draws `days_per_batch`
+    # (member, day) groups, split across the ranks. "continuous" seeding
+    # keeps one RNG stream for the whole run, so a seed fixes every
+    # epoch's batch order.
+    train_collection = build_train_collection(
+        list(cfg.data.datasets), max_label_len=cfg.data.max_seq_len
+    )
+    train_sampler = StratifiedBatchSampler(
+        train_collection,
+        group_by=("member", "day"),
+        weights_by=("member",),
+        batch_size=cfg.data.batch_size,  # GLOBAL; the sampler splits per rank
+        days_per_batch=cfg.data.days_per_batch,
         seed=cfg.training.seed,
+        seeding="continuous",
+        num_replicas=_world_size,
+        rank=_rank,
     )
     train_dl = DataLoader(
-        train_combined,
+        train_collection,
         batch_sampler=train_sampler,
-        collate_fn=collator,
+        collate_fn=MixedRecipeCollator(
+            channel_fills=dict(zip(cfg.data.datasets, channel_fills_per_embedder)),
+        ),
         num_workers=cfg.data.num_workers,
     )
 
@@ -157,9 +200,11 @@ def main(cfg: DictConfig) -> None:
     # ------------------------------------------------------------------
     model = BrainWhisperer(
         cfg.model,
+        list(cfg.data.datasets),
         num_days_per_embedder,
         calendar_days_per_embedder,
         embedder_cfg_per_embedder,
+        channel_fills=channel_fills_per_embedder,
     )
     lm = BWLightningModule(model, cfg.training, tokenizer, val_names)
 
@@ -238,8 +283,8 @@ def main(cfg: DictConfig) -> None:
         strategy=DDPStrategy(find_unused_parameters=True)
         if _world_size > 1
         else "auto",
-        # Using the custom StratifiedDayBatchSampler forces a workaround;
-        # all ranks run the full validation set, redundant but correct.
+        # Using the custom batch_sampler forces a workaround; all ranks run
+        # the full validation set, redundant but correct.
         use_distributed_sampler=False,
         callbacks=callbacks,
         logger=logger,
