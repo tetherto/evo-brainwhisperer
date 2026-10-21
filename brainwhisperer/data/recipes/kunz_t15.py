@@ -7,7 +7,6 @@ from tether_scratch.datasets.utils import dataset_dir
 from tether_scratch.extractors import NeuralFeatureExtractor
 
 from brainwhisperer.data.recipes._kunz import KunzRecipe
-from brainwhisperer.data.recipes.replay import KUNZ_T15_PUBLISHED_CALENDAR_DAYS
 from brainwhisperer.data.rescale import KunzPairedBlockRescale
 
 _VAL_QUERY = (
@@ -71,17 +70,6 @@ class KunzT15Recipe(KunzRecipe):
             channels=_BUILDER_CHANNEL_ORDER,
             aggregation="cat",
         )
-
-    def calendar_days(self) -> list[int]:
-        """REPLAY PIN, not data: the published embedder trained with all
-        three T15 dates as calendar day 0 (see replay.py and ADR 0005).
-
-        The session rule derives [0, 287, 308]; adopting it changes the
-        month-bucket sizing from 1 to 11 slots and invalidates the
-        published checkpoints — that is the planned retrain's decision,
-        not this pipeline's.
-        """
-        return list(KUNZ_T15_PUBLISHED_CALENDAR_DAYS)
 
     def postprocess_val(self, dataset, events):
         dataset.prepare()
