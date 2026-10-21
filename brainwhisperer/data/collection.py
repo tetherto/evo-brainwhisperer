@@ -43,11 +43,19 @@ def _day_rank(mapping: dict, value, dataset_name: str):
         ) from None
 
 
+def day_indices(ds, name: str) -> list[int]:
+    """Each trial's day index in a prepared recipe dataset, read from its
+    DAY extractor's mapping (no features are extracted)."""
+    day_extractor = ds.extractors[RECIPES[name].DAY]
+    mapping = _day_mapping(day_extractor)
+    raw_days = ds.triggers[day_extractor.event_field]
+    return [_day_rank(mapping, value, name) for value in raw_days]
+
+
 class MixedRaggedDataset(torch.utils.data.Dataset):
     """Concatenation of per-member ragged datasets, tagged with their name.
     ``datasets`` maps registered dataset name -> prepared `RaggedSegmentDataset`
-    in the order the sampler must scan it (the old run's
-    ``cfg.data.datasets`` order).
+    in the order the sampler must scan it (``cfg.data.datasets`` order).
     """
 
     def __init__(self, datasets: Mapping[str, torch.utils.data.Dataset]) -> None:
@@ -61,16 +69,9 @@ class MixedRaggedDataset(torch.utils.data.Dataset):
         frames = []
         for name, ds in zip(self._names, self._datasets):
             self._starts.append(start)
-            day_extractor = ds.extractors[RECIPES[name].DAY]
-            mapping = _day_mapping(day_extractor)
-            raw_days = ds.triggers[day_extractor.event_field]
             frame = ds.metadata.copy()
             frame.insert(0, MEMBER, name)
-            frame.insert(
-                1,
-                RECIPES[name].DAY,
-                [_day_rank(mapping, value, name) for value in raw_days],
-            )
+            frame.insert(1, RECIPES[name].DAY, day_indices(ds, name))
             frames.append(frame)
             start += len(ds)
         self._metadata = pd.concat(frames, ignore_index=True)

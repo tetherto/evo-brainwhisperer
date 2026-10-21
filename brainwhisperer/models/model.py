@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import torch
 import torch.distributed.tensor
 from peft import LoraConfig, get_peft_model
@@ -238,3 +240,17 @@ class BrainWhisperer(nn.Module):
         for name, param in self.whisper.named_parameters():
             if "decoder" in name:
                 param.requires_grad_(True)
+
+    def load_checkpoint(self, ckpt_path: str | Path) -> None:
+        """Load the weights of a checkpoint written by train.py (strict).
+
+        Lightning stores this model under the ``model.`` prefix of the
+        checkpoint's state dict (``BWLightningModule.model``).
+        """
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        state_dict = {
+            k.removeprefix("model."): v
+            for k, v in ckpt["state_dict"].items()
+            if k.startswith("model.")
+        }
+        self.load_state_dict(state_dict)

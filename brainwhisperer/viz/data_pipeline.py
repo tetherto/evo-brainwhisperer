@@ -1,9 +1,9 @@
 """
 Explanatory diagrams for the data pipeline.
 
-Two figures that walk through how raw pickle data becomes a NeuralBatch.
+Two figures that walk through how a recipe dataset becomes a NeuralBatch.
 
-  plot_dataset_structure  —  one day's sentences as stored in the pickle
+  plot_dataset_structure  —  one recording day's trials from a recipe dataset
   plot_batch_anatomy      —  a collated NeuralBatch with real-vs-padding split
 
 Both functions draw every element explicitly with no shared sub-routines,
@@ -19,6 +19,8 @@ from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.figure import Figure
 
 from brainwhisperer.data.batch import NeuralBatch
+from brainwhisperer.data.collection import day_indices
+from brainwhisperer.data.recipes import RECIPES
 
 # ── brand palette ──────────────────────────────────────────────────────────────
 _PURPLE = "#5237B7"  # real-signal fill
@@ -39,6 +41,7 @@ _SIGNAL_CMAP = LinearSegmentedColormap.from_list(
 
 def plot_dataset_structure(
     ds,
+    name: str,
     day: int = 0,
     n_sentences: int = 6,
     zoom_sentence: int = 0,
@@ -48,6 +51,10 @@ def plot_dataset_structure(
     """
     Four-panel figure showing one day's raw data at three levels of detail.
 
+    ``ds`` is a prepared recipe dataset (``RECIPES[name].build_val_dataset``
+    or ``build_train_dataset``) and ``name`` its registered dataset name.
+    Every trial of the chosen day is loaded, so pick a val set for speed.
+
     Col 0  — title + subtitle (top), horizontal bar chart of every sentence's
               duration in appearance order (sentence 0 at top).
     Col 1  — isometric card stack: one card per sentence.  The zoom_sentence
@@ -55,30 +62,27 @@ def plot_dataset_structure(
     Col 2  — full EEG heatmap for the selected sentence with a blue zoom box.
     Col 3  — stacked waveform traces for the zoom region, drawn in accent blue.
     """
-    import torch
     from matplotlib.gridspec import GridSpec
 
-    base = ds._base
-
-    # ── collect sentence indices belonging to this day ─────────────
-    all_day_indices = torch.where(base.days == day)[0].tolist()
-    shown_indices = all_day_indices[:n_sentences]
-    total_in_day = len(all_day_indices)
-
-    t_values = [np.asarray(base.neural_features[i]).shape[0] for i in shown_indices]
-    all_t_values = [
-        np.asarray(base.neural_features[i]).shape[0] for i in all_day_indices
+    # ── load every trial of this day as a (C, T) array ─────────────
+    neural = RECIPES[name].NEURAL
+    all_day_indices = [i for i, d in enumerate(day_indices(ds, name)) if d == day]
+    if not all_day_indices:
+        raise ValueError(f"{name}: no trials on day {day}")
+    signals = [
+        np.asarray(ds[i].data[neural], dtype=np.float32) for i in all_day_indices
     ]
-    C = np.asarray(base.neural_features[shown_indices[0]]).shape[1]
-    n_shown = len(shown_indices)
+    total_in_day = len(all_day_indices)
+    n_shown = min(n_sentences, total_in_day)
+
+    all_t_values = [x.shape[1] for x in signals]
+    t_values = all_t_values[:n_shown]
+    C = signals[0].shape[0]
     T_ref = max(t_values)
 
     # ── resolve zoom bounds ────────────────────────────────────────
     zoom_sentence = max(0, min(zoom_sentence, n_shown - 1))
-    zoom_ds_idx = shown_indices[zoom_sentence]
-    sig_zoom = np.asarray(
-        base.neural_features[zoom_ds_idx], dtype=np.float32
-    ).T  # (C, T)
+    sig_zoom = signals[zoom_sentence]  # (C, T)
     T_zoom = sig_zoom.shape[1]
 
     ch0 = max(0, min(zoom_channels[0], C - 2))
@@ -111,7 +115,7 @@ def plot_dataset_structure(
     ax_title.text(
         0.0,
         1.0,
-        "Card dataset",
+        f"{name} dataset",
         fontsize=15,
         fontweight="medium",
         color=_DARK,
@@ -121,7 +125,7 @@ def plot_dataset_structure(
     ax_title.text(
         0.0,
         0.35,
-        f"Day {day}, subject {ds.SBJ_IDX}: {total_in_day} sentences",
+        f"Day {day}: {total_in_day} sentences",
         fontsize=11,
         color=_GRAY,
         va="top",
@@ -176,14 +180,13 @@ def plot_dataset_structure(
     N_T_DRAW = 60
 
     for sentence_pos in reversed(range(n_shown)):
-        ds_idx = shown_indices[sentence_pos]
         T_i = t_values[sentence_pos]
         card_w = card_widths[sentence_pos]
         zo = n_shown - sentence_pos
         x0 = sentence_pos * ey[0]
         y0 = sentence_pos * ey[1]
 
-        sig_raw = np.asarray(base.neural_features[ds_idx], dtype=np.float32).T
+        sig_raw = signals[sentence_pos]
         ch_idx = np.round(np.linspace(0, C - 1, N_CH_DRAW)).astype(int)
         t_idx = np.round(np.linspace(0, T_i - 1, N_T_DRAW)).astype(int)
         sig_sub = sig_raw[np.ix_(ch_idx, t_idx)]
