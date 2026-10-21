@@ -1,23 +1,18 @@
-"""The Wairagkar per-block pooled z-score as a loader rewrite (PLAN.md step 11).
+"""Wairagkar normalization: per-block z-score pooled over the block's trials.
 
-The old ``WairagkarDataset`` builder (``audit/wair_jude/wair_repro.py``, the
-verbatim re-derivation that matches the pickle to 1.9e-6) concatenated each
-block's 24 trials along time, fitted one per-channel ``(mean, std)`` over
-that pooled array, and divided by ``sd`` with zeros replaced by ``1.0`` —
-across trials, not inside one stored array. ``transforms.RescaleNeural``
-fits per timeline (one timeline is one trial here), so the cross-trial
-pool is unreachable from a ``stat_row_query``; this transform pools by
-hand and bakes ``(mean, divisor)`` into every stream row of the block via
-``scaling.rescaled_loader_json``.
+The published Wairagkar data was built by joining each block's 24 trials
+along time, fitting one per-channel ``(mean, std)`` over that pooled array,
+and dividing by ``sd`` with zeros replaced by ``1.0``. ``RescaleNeural`` fits
+per timeline (one timeline is one trial here), so it cannot pool across
+trials; this transform pools by hand and bakes ``(mean, divisor)`` into every
+stream row of the block via ``scaling.rescaled_loader_json``.
 
-The values are baked at the stored array's own scale: the recipe extracts
-at ``frequency="native"`` (the release ships 100 Hz bins and nothing
-rescales or pairs them), so a pooled stored-bin statistic is exactly the
-builder's pooled statistic — no rescale asymmetry like Kunz's pair sums
-enters here. The zero-guard lands as ``where(sd == 0, 1.0, sd)`` in the
-divisor itself (the builder's ``sd[sd == 0] = 1.0`` line), which is why
+The recipe extracts at ``frequency="native"`` (the release ships 100 Hz bins
+and nothing rescales or pairs them), so a statistic pooled over stored bins
+is exactly the published one, with no pairing correction as in Kunz. The
+zero guard is applied in the divisor itself (``where(sd == 0, 1.0, sd)``), so
 the loader's ``guard`` never fires on these rows; it is still written as
-``"zero_to_one"`` so the JSON names the formula it came from.
+``"zero_to_one"`` so the JSON names the formula.
 """
 
 import typing as tp

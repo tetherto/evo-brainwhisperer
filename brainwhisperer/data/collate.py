@@ -14,7 +14,7 @@ def default_ragged_collator() -> RaggedCollator:
     return RaggedCollator(
         fields={
             NEURAL: PadSpec(axis=-1, pad_value=0),
-            # -100 = PyTorch CE ignore index; the old collate masked it in.
+            # -100 = PyTorch CE ignore index, so padded label positions add no loss.
             WHISPER: PadSpec(axis=-1, pad_value=-100),
             PHONEMES: PadSpec(axis=-1, pad_value=0),
             # DAY is left unconfigured: every sample carries the same

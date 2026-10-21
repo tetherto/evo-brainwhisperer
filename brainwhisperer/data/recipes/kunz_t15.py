@@ -78,6 +78,6 @@ class KunzT15Recipe(KunzRecipe):
 
     def postprocess_train(self, dataset, events):
         dataset.prepare()
-        # The reorder runs before the gate, mirroring the old class
-        # (gated, table-ordered pickle).
+        # Reorder first, then gate: the published train order was built
+        # that way.
         return self._gate(self._reorder_to_legacy_table(dataset, events))

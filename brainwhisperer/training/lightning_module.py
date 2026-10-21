@@ -99,8 +99,8 @@ class BWLightningModule(LightningModule):
                 "weight_decay": self.cfg.weight_decay,
             },
             {
-                # Whisper decoder + LoRA adapter.  LR is hardcoded 1e-4 per the
-                # original pl_wrapper (marked TODO there, preserved here as-is).
+                # Whisper decoder + LoRA adapter. LR is fixed at 1e-4, as in
+                # the published runs.
                 # Excluding frozen params (whisper.model.encoder) to avoid errors on multi-GPU.
                 "params": [
                     p for p in self.model.whisper.parameters() if p.requires_grad

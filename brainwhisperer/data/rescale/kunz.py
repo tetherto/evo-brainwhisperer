@@ -1,35 +1,28 @@
-"""The Kunz T15 paired-block z-score as a loader rewrite (PLAN.md step 11).
+"""Kunz T15 normalization: per-block z-score fitted on the paired array.
 
-The published T15 builder (``docs/migration/audit/kunz/oldsteps.py``) paired
-each trial's bins two-by-two from the trial's *delay* start — spike pairs
-summed, power pairs averaged — concatenated the paired trials of one block,
-and divided every value by the block's per-channel std fitted on that
-paired array (``sd + 1e-8``, the eps guard ``p7_norm.py`` proved on all
-eight sentenceData files to max 7.5e-06). The statistic therefore lives on
-an array the row's stored payload is not: pairing is the extractor's job
-(``pair_trigger_field="pair_start"``) and happens *after* the loader read,
-so no ``stat_row_query`` can reach it. This transform pairs by hand (same
-ops as the audits), fits per block, and bakes ``(mean, divisor)`` into the
-stream rows through ``scaling.rescaled_loader_json``: the read subtracts
-and divides the *unpaired* bins, and the extractor's linear pairing
-reproduces the builder's z-scored pairs.
+The published T15 data was built by pairing each trial's bins two by two
+from the trial's *delay* start (spike pairs summed, power pairs averaged),
+joining the paired trials of one block, and dividing every value by the
+block's per-channel std fitted on that paired array (``sd + 1e-8``). The
+statistic lives on an array the stored payload is not: pairing is the
+extractor's job (``pair_trigger_field="pair_start"``) and happens *after* the
+loader read, so no ``stat_row_query`` can reach it. This transform pairs by
+hand, fits per block, and bakes ``(mean, divisor)`` into the stream rows
+through ``scaling.rescaled_loader_json``. The read rescales the *unpaired*
+bins, and the extractor's linear pairing then yields the z-scored pairs.
 
-The bake is deliberately asymmetric between the two streams. A rescaled
-stored bin is ``(a - B) / D``, so a summed spike pair reads back as
-``(a1 + a2 - 2B) / D`` — to land on the builder's ``(S - mu) / (sd + eps)``
-for pair sum ``S`` the transform bakes ``B = mu / 2``. The extractor then
-multiplies each summed spike pair by the native-rate factor 2 *after*
-pairing (``tether_scratch/extractors.py::_get_paired_timed_array``; its
-count unit is preserved and convertible, ``BandPower``'s is not), so the
-spike divisor absorbs it too: ``D = 2 * (sd + eps)``, giving the read pair
+The bake differs between the two streams. A rescaled stored bin is
+``(a - B) / D``, so a summed spike pair reads back as ``(a1 + a2 - 2B) / D``.
+To land on ``(S - mu) / (sd + eps)`` for pair sum ``S``, the transform bakes
+``B = mu / 2``. The extractor then multiplies each summed spike pair by the
+native-rate factor 2 *after* pairing
+(``tether_scratch/extractors.py::_get_paired_timed_array``), so the spike
+divisor absorbs it too: ``D = 2 * (sd + eps)``, giving
 ``2 * (S - 2B) / D = (S - mu) / (sd + eps)``. An averaged power pair is
-``(M - B) / D`` already at factor 1, so the BandPower stream bakes
-``B = mu``, ``D = sd + eps`` unchanged. The step-7 live check (``parity/step7_kunz_pairing.py``) proved
-the extractor's pairing lands on exactly the builder's bins
-(``T_new == T_old`` on all 50 val trials) and that each trial's delay and
-go epochs abut (the straddle pair is ``(delay end, go start)``), so
-pairing the region ``[pair_start, sentence end)`` here covers the same
-bins the builder concatenated.
+``(M - B) / D`` at factor 1, so the BandPower stream bakes ``B = mu``,
+``D = sd + eps`` unchanged. Each trial's delay and go epochs abut, so pairing
+the region ``[pair_start, sentence end)`` covers the same bins the published
+data used.
 """
 
 import typing as tp
@@ -155,9 +148,8 @@ class KunzPairedBlockRescale(ns.EventsTransform):
         """The builder's pairing of one cue region: ``(channels, n_pairs)``."""
         a_bin = int(round((float(getattr(cue, self.pair_field)) - t0) * self.rate_hz))
         s_bin = int(round((float(cue.start) - t0) * self.rate_hz))
-        # bin start and duration rounded separately, the extractor's own
-        # convention (parity/step7_kunz_pairing.py line 108) so the region
-        # is the same bins the extractor will later pair.
+        # Bin start and duration are rounded separately, the extractor's own
+        # convention, so the region is the same bins the extractor will pair.
         e_bin = s_bin + int(round(float(cue.duration) * self.rate_hz))
         n_pairs = (e_bin - a_bin) // 2
         if n_pairs <= 0:

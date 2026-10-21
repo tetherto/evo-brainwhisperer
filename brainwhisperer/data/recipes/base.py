@@ -49,7 +49,7 @@ class Recipe(ABC):
     #: chronological session list) or "date" (rank of the distinct date).
     day_field: str = "session"
 
-    #: Fill-to-512 rule (ADR 0001): "none", "zeros" or "duplicate".
+    #: Fill-to-512 rule: "none", "zeros" or "duplicate".
     CHANNEL_FILL: str = "none"
 
     # ------------------------------------------------------------------
@@ -59,8 +59,8 @@ class Recipe(ABC):
     def build_chain(self, split: str = "val") -> ns.Chain:
         """Study + rescale + split assignment, filtered to `split`.
 
-        Exposed separately from `build_*_dataset` so parity checks can
-        verify trial identity without extracting any features.
+        Exposed separately from `build_*_dataset` so tests can check which
+        trials a split holds without extracting any features.
         """
 
     @abstractmethod
@@ -102,8 +102,8 @@ class Recipe(ABC):
         return [rule.calendar_day[s] for s in rule.sessions]
 
     def postprocess_val(self, dataset, events):
-        """Default: just prepare. Overrides attach gates/reorders BEFORE
-        or AFTER `prepare()`, exactly where the old loader ran them."""
+        """Default: just prepare. Overrides add length gates or reorders
+        before or after `prepare()`."""
         dataset.prepare()
         return dataset
 
@@ -130,14 +130,13 @@ class Recipe(ABC):
         """Trial-windowed segmenter; the label fields are identical for
         every dataset, so only NEURAL and DAY come from the hooks.
 
-        `max_label_len` is the run's `data.max_seq_len`: it reproduces the
-        old collate's Whisper-label truncation.
+        `max_label_len` is the run's `data.max_seq_len`: Whisper labels
+        longer than this are truncated.
         """
         return RaggedSegmenter(
             extractors={
                 NEURAL: self.neural_extractor(),
-                # Whisper ids with BOS stripped, truncated at max_label_len —
-                # same contract as the old collate.py.
+                # Whisper ids with BOS stripped, truncated at max_label_len.
                 WHISPER: WhisperLabelEncoder(
                     aggregation="trigger", max_length=max_label_len
                 ),

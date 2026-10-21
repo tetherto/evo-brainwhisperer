@@ -1,39 +1,31 @@
-"""Jude's normalization quirk as a NeuralSet step, with its statistics fitted live.
+"""Jude's normalization: paired block mean, divided by the last block's std.
 
-The old Jude builder (``docs/migration/audit/wair_jude/jude_repro.py``, the
-verbatim re-derivation that matches the pickle to 0.0 max diff) paired each
-trial's bins two-by-two from the go cue (threshold crossings summed, spike
-band power averaged after capping values at 50,000), concatenated the
-paired trials of each block, subtracted that block's per-channel mean —
-and divided by the std of the **session's last published block**, a
-timeline this row's read never contains. No ``stat_row_query`` can name
-that divisor (it lives on other rows entirely) and the subtraction's
-statistic lives on the *paired* array, not the stored one. Step 6 shipped
-this transform with the divisor read from a saved table; step 11 replaced
-the table with the live fit: the transform pairs the same windows the
-builder paired (per block, from the study's own ``Sentence`` rows), fits
-both statistics itself, and bakes ``(mean, divisor)`` into the stream rows
-via ``scaling.rescaled_loader_json``.
+The published Jude data was built by pairing each trial's bins two by two
+from the go cue (threshold crossings summed, spike band power averaged after
+capping values at 50,000), joining the paired trials of each block,
+subtracting that block's per-channel mean, and dividing by the std of the
+**session's last published block**. That divisor lives on other rows, and the
+mean lives on the paired array rather than the stored one, so no
+``stat_row_query`` can reach either. This transform pairs the same windows
+per block (from the study's own ``Sentence`` rows), fits both statistics,
+and bakes ``(mean, divisor)`` into the stream rows via
+``scaling.rescaled_loader_json``.
 
-Which block is "last" follows the published run's block lists
-(``splits/jude_published_scope.json``), not the study's catalogue: the
-reader knows blocks the old builder never read (step 8, D4 keeps them for
-step 14), and on 2024.04.17/05.06/05.07 the study's highest block is not
-the builder's last. Fitting the divisor on one of those extras instead
-would silently change the run.
+"Last block" follows the published block lists
+(``splits/jude_published_scope.json``), not the study's catalogue: the study
+also holds blocks the published data never used, and on 2024.04.17, 05.06
+and 05.07 its highest block is not the published last one. Blocks outside
+the published scope are left unscaled.
 
-The bake is asymmetric between the streams, as in ``kunz.py``: the
-recipe extracts at ``target_unit="native"`` with
-``pair_trigger_field="start"``, so SpikeCounts pairs come back as the
-stored shift subtracted **twice** per pair — the transform bakes the paired
-spike mean divided by 2 — and their divisor doubles too, because the
-extractor multiplies each summed spike pair by the native-rate factor 2
-*after* pairing (``tether_scratch/extractors.py::_get_paired_timed_array``;
-the count unit is preserved and convertible, ``BandPower``'s is not). The
-read pair then lands on ``(S - mean) / (std + eps)`` exactly as the builder
-divided. Averaged power bakes mean and divisor unchanged. ``jude_repro.log`` measured zero clips (>50,000) on the kept
-channels of all five sessions: the deposit ships values already capped,
-and the cap here is the builder's formula spelled out, not a repair.
+The bake differs between the two streams, as in ``kunz.py``. The recipe
+extracts at ``target_unit="native"`` with ``pair_trigger_field="start"``, so a
+summed spike pair subtracts the stored shift **twice**: the transform bakes
+the paired spike mean divided by 2. The spike divisor doubles too, because
+the extractor multiplies each summed spike pair by the native-rate factor 2
+*after* pairing (``tether_scratch/extractors.py::_get_paired_timed_array``).
+The read pair then equals ``(S - mean) / (std + eps)``. Averaged power bakes
+mean and divisor unchanged. The released values are already capped at
+50,000; the cap here spells out the original formula.
 """
 
 import typing as tp
@@ -122,7 +114,7 @@ class JudeLastBlockRescale(ns.EventsTransform):
                     f"published scope (have {sorted(scope)})"
                 )
             if block not in scope[session]:
-                continue  # a reader extra the old builder never read: left raw
+                continue  # outside the published scope: left unscaled
             fitted_sessions.add(session)
             fits = {}
             for etype in self.event_types:

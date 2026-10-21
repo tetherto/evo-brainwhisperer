@@ -17,7 +17,7 @@ MAX_TRIAL_LEN = 3000
 
 
 class KunzRecipe(Recipe):
-    """T12/T15 commonalities: date-keyed day axis, gate, legacy table order."""
+    """T12/T15 commonalities: date-keyed day axis, length gate, train file order."""
 
     day_field = "date"
 
@@ -41,7 +41,7 @@ class KunzRecipe(Recipe):
         return dataset
 
     def _reorder_to_legacy_table(self, dataset, events):
-        """Reorder the segmenter's study order."""
+        """Reorder train trials by `train_file_order`, then block, then trial."""
         sentence_rows = events[
             (events["type"] == "Sentence") & (events["split"] == "train")
         ]

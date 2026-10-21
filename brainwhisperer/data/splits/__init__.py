@@ -1,9 +1,7 @@
 """Pinned held-out val trials for Wairagkar and Jude.
 
-The splits used for the published results were pseudo-random dice rolls
-reproducible only under the old pickle loading pipeline
-(the one original adopted by the model, now swapped for one based on NeuralSet).
-These JSON files pin the resuxlting held-out trials for the sake of reproducibility.
+The published Wairagkar and Jude splits were drawn at random. These JSON
+files store the resulting trials, so every run holds out the same ones.
 """
 
 import json
@@ -62,28 +60,13 @@ def published_scope(dataset: str) -> dict[str, list[int]]:
         return json.load(f)
 
 
-def old_scope_query(dataset: str) -> str:
-    """Pandas query selecting the published run's builder blocks.
-
-    Not applied by default (PLAN.md step 8, D4 — the reader's extra
-    all-success task blocks are kept, per the Card precedent for its 3
-    extra healthy trials). Step 14 applies it as the first diagnostic if
-    its validation scores land outside the old runs' spread.
-    """
-    clauses = [
-        f"(session == {session!r} and block in {sorted(blocks)})"
-        for session, blocks in published_scope(dataset).items()
-    ]
-    return " or ".join(clauses)
-
-
 def held_out_split(dataset: str):
     """``CreateColumn`` adding ``split``: ``train`` everywhere, ``val`` on
     the pinned trials' rows.
 
-    Assembling the query here keeps the JSON files the single source of
-    truth (PLAN.md step 8, D3). Applied in the step-11 recipes before the
-    Segmenter, so segments inherit ``split`` from their trigger rows.
+    The query is built from the JSON files, which stay the single source of
+    truth. Recipes apply it before the Segmenter, so segments inherit
+    ``split`` from their trigger rows.
     """
     from neuralset.events.transforms.basic import CreateColumn
 

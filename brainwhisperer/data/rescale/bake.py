@@ -1,15 +1,14 @@
 """Loader-rewrite plumbing shared by the rescale transforms.
 
-"Bake" is this package's verb for computing a published builder's
-normalization statistic at build time and writing it into a stream row's
-loader JSON via ``scaling.rescaled_loader_json``: the read then applies
+"Bake" means computing a dataset's normalization statistic at build time and
+writing it into a stream row's loader JSON via
+``scaling.rescaled_loader_json``. Reading the row then applies
 ``(x - mean) / divisor`` and fits nothing (``stat_rows=[]``).
 
-The transforms (``jude``, ``kunz``, ``wairagkar``) differ in *how* they fit
-— those asymmetries are audit-pinned and stay in each module — but they are
-identical in how they read a stored stream, insist a timeline carries
-exactly one row per event type, and rewrite loader rows. That shared
-plumbing lives here; the audit-pinned error wordings are kept verbatim.
+The transforms (``jude``, ``kunz``, ``wairagkar``) differ in how they fit, and
+that logic stays in each module. They share how they read a stored stream,
+check that a timeline has exactly one row per event type, and rewrite loader
+rows; that shared code lives here.
 """
 
 import json
