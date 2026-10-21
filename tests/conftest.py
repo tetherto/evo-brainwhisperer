@@ -36,21 +36,14 @@ def run_python():
     return _run
 
 
+_LIGHTBEAM_VARS = ("BRAINAUDIO_ROOT", "LIGHTBEAM_KENLM_PATH", "LIGHTBEAM_ADAPTER_PATH")
+
+
 @pytest.fixture
 def env_with_paths():
-    return {
-        **os.environ,
-        "CARD_ROOT": "/tmp",
-        "KUNZ_ROOT": "/tmp",
-        "WILLETT_ROOT": "/tmp",
-        "RNN_ARGS": "/tmp/rnn_args.yaml",
-    }
+    return {**os.environ, **{k: "/tmp" for k in _LIGHTBEAM_VARS}}
 
 
 @pytest.fixture
 def env_without_paths():
-    return {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("CARD_ROOT", "KUNZ_ROOT", "WILLET_CODE", "RNN_ARGS")
-    }
+    return {k: v for k, v in os.environ.items() if k not in _LIGHTBEAM_VARS}

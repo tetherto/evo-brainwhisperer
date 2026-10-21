@@ -1,15 +1,14 @@
 """
 Train-time parity guards.
 
-The refactor must reproduce the REFERENCE (pre-refactor) codebase's *initialization*
-and *regularization*, not just its forward computation. The existing numerical tests
-(e.g. test_embedder_numerical) copy trained weights in before comparing outputs, so they
-verify FORWARD equivalence but are structurally blind to init/dropout: those affect only
-training dynamics and produce identical eval-mode output for identical weights.
+The model must reproduce the published runs' *initialization* and *regularization*,
+not just their forward computation. Init and dropout only affect training dynamics:
+with identical weights the eval-mode output is identical, so forward tests cannot
+catch a change here.
 
-Every assertion below corresponds to a divergence that was found and fixed against
-REFERENCE. Each one produces a *bit-identical forward given the same weights*, which is
-exactly why forward-equivalence tests never caught them.
+Each assertion below pins a setting that once diverged from the published runs while
+still giving a bit-identical forward for the same weights. "REF" in the messages means
+the published runs' code.
 """
 
 import torch
@@ -111,7 +110,9 @@ class TestEmbedderInitParity:
         )
 
     def test_proj_B_inits_to_zero(self):
-        assert all((p == 0).all() for p in _embedder().proj_B), "proj_B must init to zero"
+        assert all((p == 0).all() for p in _embedder().proj_B), (
+            "proj_B must init to zero"
+        )
 
     def test_day_proj_params_are_independent(self):
         """proj_W/proj_A/etc must be ParameterList (one Parameter per day), not a stacked
@@ -158,7 +159,7 @@ class TestEmbedderDropoutParity:
             "session dropout must be 0.1 (REF PositionalEncoding)"
         )
 
-    def test_no_legacy_proj_dropout(self):
+    def test_no_single_proj_dropout(self):
         emb = _embedder()
         assert not hasattr(emb, "proj_dropout"), (
             "the old single proj_dropout(0.4) applied the patch-mode value on the conv path; "
@@ -173,12 +174,20 @@ class TestEmbedderDropoutParity:
         )
 
     def test_session_encoding_passes_through_dropout(self):
-        """In train mode the session-encoding path must actually drop (p=0.1)."""
+        """In train mode the session-encoding path must actually drop (p=0.1).
+
+        Published-run layout: the session encoding lands on the FIRST half,
+        and the last half stays untouched.
+        """
         emb = _embedder().train()
         torch.manual_seed(0)
         x = torch.zeros(4, 1500, 384)
         day = torch.zeros(4, dtype=torch.long)
         out = emb._add_day_encoding(x, day)
-        # with p=0.1 some session-encoding entries on the first half are zeroed; the survivors
-        # are scaled by 1/(1-p), so the first half is not simply the raw encoding.
+        assert out[:, :, 192:].abs().sum() == 0, (
+            "last half must stay untouched under the published-run layout"
+        )
+        # with p=0.1 some session-encoding entries on the first half are
+        # zeroed; the survivors are scaled by 1/(1-p), so the first half is
+        # not simply the raw encoding.
         assert out[:, :, :192].abs().sum() > 0
