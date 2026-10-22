@@ -9,13 +9,14 @@ Non-obvious design decisions in BrainWhisperer: what was chosen, what was reject
 1. **`NeuralBatch` is a typed dataclass, not a dict**  
 `NeuralBatch` (`data/batch.py`) is the contract between the data pipeline and the model. Every field is a typed tensor with a documented shape and meaning. A simpler strategy (i.e., passing a plain dict through the DataLoader) would let a key typo or shape error surface only when the model tries to use the value, potentially hundreds of GPU-hours into a run. Dataclasses fail at construction, before any computation.
 
-2. **Dataset registry**  
-`data/registry.py` maps string names to dataset classes via a `@register_dataset` decorator. A new dataset registers itself on import; the training entry-point reads names from config and calls `get_dataset(name)`, avoiding explict declarations and hard-coded paths.
-The rejected alternative was a single `get_data_loaders` function with a long `if/else` chain, but this approach requires editing logic to add a new participant, making every addition a potential regression source.
+2. **Dataset registry: one explicit mapping of stateless recipes**  
+`data/recipes/__init__.py` exposes `RECIPES: dict[str, Recipe]`, one stateless instance per dataset. Each recipe builds its own datasets (`build_train_dataset`, `build_val_dataset`, `build_chain`) and carries the model-shape metadata the entry points need: `NUM_DAYS` (day-axis size of its embedder), `CHANNEL_FILL` (how to widen it to 512 channels) and `calendar_days()`. `train.py`, `eval.py` and `eval_lightbeam.py` reach every dataset through this one mapping, so no entry point hard-codes a path or carries a per-dataset branch.
+The rejected alternative was a single `get_data_loaders` function with a long `if/else` chain, which requires editing shared logic to add a participant and makes every addition a potential regression source. Registration is now a plain dict literal rather than an import side-effect decorator: the explicit form removes any dependence on import order and keeps `data.datasets` checkable against the model, which `train.py` does with `assert len(cfg.data.datasets) == cfg.model.n_embedders`.
+`build_in_parallel()` in the same module threads the six builds, because dataset preparation dominates start-up.
 
-3. **Tokenizer injected into `NeuralCollator`**  
-Since dataset classes return raw sentence strings and the collator converts them to token ids, `NeuralCollator` (`data/collate.py`) receives the tokenizer as a constructor argument. 
-Injecting the tokenizer in the collator instead of datasets, keeps each dataset class independent of any particular language model. This way, extending the model with a different decoder would only require passing a different tokenizer to the collator, with no changes to the dataset code.
+3. **Token ids come from the recipe, not from the collator**  
+`Recipe.segmenter()` (`data/recipes/base.py`) wires the label extractors: `WhisperLabelEncoder` for the WHISPER field (BOS stripped, truncated at `data.max_seq_len`) and `PhonemeEncoder` for PHONEMES, both triggered on `type == 'Sentence'`. Token ids are therefore produced once, while the dataset is built, and travel inside each sample. `MixedRecipeCollator` and `SingleRecipeCollator` (`data/collate.py`) take no tokenizer at all: they widen channels and pad via `default_ragged_collator()`, whose `PadSpec` uses 0 for NEURAL and PHONEMES and -100, the cross-entropy ignore index, for WHISPER.
+The tokenizer is lazy-loaded inside the extractor from a `whisper_name` field defaulting to `openai/whisper-tiny.en`, so a recipe names the decoder vocabulary instead of being handed an object. This keeps the data layer independent of any particular language model: extending the pipeline to a different decoder means changing one extractor field, with no edits to the collators or to the dataset code. The only place a tokenizer object is injected is the decode side (`BWLightningModule`, `prediction.py`), where it is used solely to turn ids back into text.
 
 ---
 
@@ -29,15 +30,15 @@ To avoid this, the config is restored from `config.yaml` via an OmegaConf merge;
 
 ---
 
-## Distributed training (`brainwhisperer/training/lightning_module.py`)
+## Distributed training (`train.py` and `tether_scratch.dataloader.StratifiedBatchSampler`)
 
 5. **Batch partitioning: shared-seed modulo split**
-`StratifiedDayBatchSampler` gives every rank the *same* seed, so all ranks advance through an identical deterministic batch sequence; each rank then yields only the batches whose global position satisfies `global_idx % world_size == rank`.
+`StratifiedBatchSampler` (`tether_scratch/dataloader.py`, constructed in `train.py`) is given the *same* seed on every rank with `seeding="continuous"`, so all ranks advance through one identical deterministic batch sequence; each rank then yields only the batches whose global position satisfies `global_index % num_replicas == rank`. The divisibility this needs is asserted twice, in `train.py` and again inside the sampler: `batch_size` and `days_per_batch` must both be multiples of the world size.
 Seeding each rank's RNG with `seed + LOCAL_RANK` would not prevent two independent RNGs to occasionally draw the same indices from the same pool. In this scenario, DDP would average gradients computed on partially identical data, silently shrinking the effective batch size.  
 Modulo partitioning over a shared sequence is disjoint by construction (every integer belongs to exactly one residue class) and needs no inter-process communication.
 
 6. **Dropping batch-count remainder**
-Per-rank batch count is `floor(total_batches / world_size)`, with any remainder dropped rather than padded or unevenly distributed.
+Per-rank batch count is `len(dataset) // (batch_size // num_replicas) // num_replicas`, i.e. `floor(total_batches / world_size)`, with any remainder dropped rather than padded or unevenly distributed. The sampler returns that number from `__len__` and sets `num_batches = per_rank * num_replicas`, so every rank agrees on the epoch length.
 This keeps every rank's batch count exactly equal, which synchronized DDP requires. Padding was rejected because it would need extra bookkeeping to keep dummy or duplicated batches from biasing the loss.
 
 7. **Setting `find_unused_parameters=True`**  
@@ -45,5 +46,5 @@ This keeps every rank's batch count exactly equal, which synchronized DDP requir
 Setting `find_unused_parameters=True` when world_size > 1, re-runs the unused-parameter traversal every step avoiding it. The trade-off with respect to using `static_graph=True` is a small per-step traversal cost instead of a one-time cost.
 
 8. **`Trainer(use_distributed_sampler=False)` for the custom batch sampler**
-`StratifiedDayBatchSampler` doesn't subclass `torch.utils.data.BatchSampler`, so Lightning's default attempt to inject a `DistributedSampler` into it fails at startup with a `TypeError`.
+`StratifiedBatchSampler` doesn't subclass `torch.utils.data.BatchSampler` (it derives from `Sampler[list[int]]`), so Lightning's default attempt to inject a `DistributedSampler` into it fails at startup with a `TypeError`.
 Avoiding the distributed sampled fixes it, but it has a side effect: Lightning also leaves the validation DataLoaders unsharded, so all ranks now validate on the full set redundantly rather than splitting the work. This redundancy is accepted here since the validation set is small and only checked once per epoch; if it becomes a bottleneck, the fix would be to shard validation explicitly with a `DistributedSampler` in `train.py` and reinstate the cross-rank gather.
