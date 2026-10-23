@@ -168,9 +168,8 @@ def time_mask(
     return x * (~mask).unsqueeze(1)
 
 
-# Channel/DC/drift noise, factored out of transform_data() to be drawn and
-# used once in the two-phase training_step.
-# .migration-memory/phase1-contamination-confirmed.md.
+# Channel/DC/drift noise, factored out of transform_data() so the two-phase
+# training_step draws it once and reuses it for both phases.
 def apply_noise(
     x: Tensor, gain_std: float, noise_std: float, offset_std: float, walk_std: float
 ) -> Tensor:

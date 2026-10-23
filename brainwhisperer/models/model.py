@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import torch
 import torch.distributed.tensor
 from peft import LoraConfig, get_peft_model
@@ -12,6 +14,7 @@ from brainwhisperer.config.schema import BWEmbedderConfig, BWModelConfig
 from brainwhisperer.data.batch import NeuralBatch
 from brainwhisperer.models.embedder import BWEmbedder
 from brainwhisperer.models.encoder import BWEncoder
+from brainwhisperer.utils.fill import FILL_NONE, fill_to_num_features
 
 _N_PHONE_CLASSES = 41  # CMU phoneme set used in CARD/Willet
 
@@ -25,36 +28,54 @@ class BrainWhisperer(nn.Module):
         - a BWEncoder, introducing custom elements w.r.t the vanilla Whisper encoder
         - a WhisperForConditionalGeneration, used unmodified except for LoRA on the decoder.
 
-    Usage: BrainWhisperer(cfg, num_days_per_embedder=[45, 24, ...])
+    Usage: BrainWhisperer(cfg, embedder_names=["card", ...], num_days_per_embedder=[45, 24, ...])
     forward() returns:
         ce_loss:      scalar, cross-entropy from Whisper decoder
         phone_logits: (B, T_ctc, 41)
-        char_logits:  (B, T_ctc, vocab_size)
-
     generate() returns token ids (B, L).
     """
 
     def __init__(
         self,
         cfg: BWModelConfig,
+        embedder_names: list[str],
         num_days_per_embedder: list[int],
         calendar_days_per_embedder: list[list[int]] | None = None,
         embedder_cfg_per_embedder: list[BWEmbedderConfig] | None = None,
+        channel_fills: list[str] | None = None,
     ):
         super().__init__()
 
-        assert len(num_days_per_embedder) == cfg.n_embedders, (
-            f"num_days_per_embedder has {len(num_days_per_embedder)} entries "
-            f"but cfg.n_embedders={cfg.n_embedders}"
+        assert len(embedder_names) == len(num_days_per_embedder) == cfg.n_embedders, (
+            f"embedder_names ({len(embedder_names)}) and "
+            f"num_days_per_embedder ({len(num_days_per_embedder)}) must both "
+            f"equal cfg.n_embedders={cfg.n_embedders}"
         )
 
-        # Position-indexed, one BWEmbedderConfig per subject group. Defaults
+        # Name-aligned, one BWEmbedderConfig per subject group. Defaults
         # to `cfg.embedder` for every group unless a per-dataset override is found
-        embedder_cfgs = embedder_cfg_per_embedder or [cfg.embedder] * cfg.n_embedders
-        assert len(embedder_cfgs) == cfg.n_embedders, (
-            f"embedder_cfg_per_embedder has {len(embedder_cfgs)} entries "
-            f"but cfg.n_embedders={cfg.n_embedders}"
+        embedder_cfgs = embedder_cfg_per_embedder or [cfg.embedder] * len(
+            embedder_names
         )
+        assert len(embedder_cfgs) == len(embedder_names), (
+            f"embedder_cfg_per_embedder has {len(embedder_cfgs)} entries "
+            f"but {len(embedder_names)} embedder names were given"
+        )
+
+        # Narrow datasets (willet 256, jude 256, kunz_t12 256) are widened
+        # to the shared conv1 width before their embedder sees them.
+        # Defaults to "none" (pass-through) for every group.
+        fills = (
+            channel_fills
+            if channel_fills is not None
+            else [FILL_NONE] * len(embedder_names)
+        )
+        assert len(fills) == len(embedder_names), (
+            f"Channel_fills has {len(fills)} entries "
+            f"but {len(embedder_names)} embedder names were given"
+        )
+        self._channel_fills = dict(zip(embedder_names, fills))
+        self._num_channels = cfg.embedder.num_features
 
         # Derive calendar-based month grouping from the acquisition dates.
         cal_days_list = (
@@ -62,9 +83,9 @@ class BrainWhisperer(nn.Module):
             if calendar_days_per_embedder is not None
             else [None] * len(num_days_per_embedder)
         )
-        self.embedders = nn.ModuleList(
-            [
-                BWEmbedder(
+        self.embedders = nn.ModuleDict(
+            {
+                name: BWEmbedder(
                     emb_cfg,
                     num_days,
                     session_to_month=(
@@ -74,16 +95,17 @@ class BrainWhisperer(nn.Module):
                         cal_days if emb_cfg.encodings == "sin" else None
                     ),
                 )
-                for emb_cfg, num_days, cal_days in zip(
-                    embedder_cfgs, num_days_per_embedder, cal_days_list
+                for name, emb_cfg, num_days, cal_days in zip(
+                    embedder_names, embedder_cfgs, num_days_per_embedder, cal_days_list
                 )
-            ]
+            }
         )
         # Share conv weights across subjects
         if cfg.n_embedders > 1:
-            for emb in self.embedders[1:]:
-                emb.conv1 = self.embedders[0].conv1
-                emb.conv2 = self.embedders[0].conv2
+            embedders = list(self.embedders.values())
+            for emb in embedders[1:]:
+                emb.conv1 = embedders[0].conv1
+                emb.conv2 = embedders[0].conv2
 
         # Encoder
         self.encoder = BWEncoder(cfg.encoder)
@@ -127,9 +149,7 @@ class BrainWhisperer(nn.Module):
         self._stride_2 = cfg.embedder.stride_2
         d_model = cfg.embedder.d_model
         ctc_in = d_model * self._unfold_width
-        vocab_size = whisper.config.vocab_size
         self.phone_head = nn.Linear(ctc_in, _N_PHONE_CLASSES)
-        self.char_head = nn.Linear(ctc_in, vocab_size)
 
         self._d_model = d_model
         self.max_source_pos = cfg.encoder.max_source_pos
@@ -140,13 +160,12 @@ class BrainWhisperer(nn.Module):
         Whisper decoder.  Used for Phase 2 of two-phase training where CE loss
         is not needed and running the decoder would waste ~half the step cost.
         """
-        embedded = self._embed(batch.signals, batch.sbj_idx, batch.day_idx)
+        embedded = self._embed(batch.signals, batch.datasets, batch.day_idx)
         enc_out = self.encoder(embedded)
 
         # Intermediate hidden state for CTC heads
         intermediate = enc_out.hidden_states[self._last_phoneme_layer + 1]
         phone_logits = self.phone_head(self._ctc_unfold(intermediate))
-        char_logits = self.char_head(self._ctc_unfold(intermediate))
 
         # CTC frame count per sample
         raw_len = batch.lengths
@@ -158,7 +177,6 @@ class BrainWhisperer(nn.Module):
         if encoder_only:
             return {
                 "phone_logits": phone_logits,
-                "char_logits": char_logits,
                 "x_len": x_len,
             }
 
@@ -169,12 +187,11 @@ class BrainWhisperer(nn.Module):
         return {
             "ce_loss": whisper_out.loss,
             "phone_logits": phone_logits,
-            "char_logits": char_logits,
             "x_len": x_len,
         }
 
     def generate(self, batch: NeuralBatch, **kwargs) -> Tensor:
-        embedded = self._embed(batch.signals, batch.sbj_idx, batch.day_idx)
+        embedded = self._embed(batch.signals, batch.datasets, batch.day_idx)
         enc_out = self.encoder(embedded)
         return self.whisper.generate(encoder_outputs=enc_out, **kwargs)
 
@@ -182,16 +199,28 @@ class BrainWhisperer(nn.Module):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _embed(self, signals: Tensor, sbj_idx: Tensor, day_idx: Tensor) -> Tensor:
-        """Route each sample in the batch to its subject-group embedder."""
+    def _embed(self, signals: Tensor, datasets: list[str], day_idx: Tensor) -> Tensor:
+        """Route each sample in the batch to its subject-group embedder by name."""
         B = signals.shape[0]
+        unknown = sorted({d for d in datasets} - set(self.embedders))
+        if unknown:
+            raise KeyError(
+                f"Batch carries unknown dataset(s) {unknown}; "
+                f"model embedders are keyed {list(self.embedders)}"
+            )
         out = torch.empty(
             B, 1500, self._d_model, device=signals.device, dtype=signals.dtype
         )
-        for s, embedder in enumerate(self.embedders):
-            mask = sbj_idx == s
+        for name, embedder in self.embedders.items():
+            mask = torch.tensor([d == name for d in datasets], device=signals.device)
             if mask.any():
-                out[mask] = embedder(signals[mask], day_idx[mask])
+                # Fill to the shared input width first: the day projection
+                # (xi @ W) mixes channels, so it must see the same 512-wide
+                # layout the checkpoint was trained on.
+                x = fill_to_num_features(
+                    signals[mask], self._channel_fills[name], self._num_channels
+                )
+                out[mask] = embedder(x, day_idx[mask])
         return out
 
     def _ctc_unfold(self, x: Tensor) -> Tensor:
@@ -211,3 +240,17 @@ class BrainWhisperer(nn.Module):
         for name, param in self.whisper.named_parameters():
             if "decoder" in name:
                 param.requires_grad_(True)
+
+    def load_checkpoint(self, ckpt_path: str | Path) -> None:
+        """Load the weights of a checkpoint written by train.py (strict).
+
+        Lightning stores this model under the ``model.`` prefix of the
+        checkpoint's state dict (``BWLightningModule.model``).
+        """
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        state_dict = {
+            k.removeprefix("model."): v
+            for k, v in ckpt["state_dict"].items()
+            if k.startswith("model.")
+        }
+        self.load_state_dict(state_dict)

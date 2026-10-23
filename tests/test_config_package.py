@@ -27,12 +27,25 @@ def test_config_schema_imports(run_python, env_with_paths):
     assert result.returncode == 0, result.stderr
 
 
-def test_paths_imports_with_env_vars(run_python, env_with_paths):
-    result = run_python("import brainwhisperer.config.paths", env=env_with_paths)
+def test_paths_imports_without_env_vars(run_python, env_without_paths):
+    # Nothing is required at import: train.py and eval.py never need paths.
+    result = run_python("import brainwhisperer.config.paths", env=env_without_paths)
     assert result.returncode == 0, result.stderr
 
 
-def test_paths_raises_on_missing_env_var(run_python, env_without_paths):
-    result = run_python("import brainwhisperer.config.paths", env=env_without_paths)
+def test_lightbeam_path_reads_env_var(run_python, env_with_paths):
+    result = run_python(
+        "from brainwhisperer.config.paths import BRAINAUDIO_ROOT; print(BRAINAUDIO_ROOT)",
+        env=env_with_paths,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "/tmp"
+
+
+def test_lightbeam_path_raises_on_missing_env_var(run_python, env_without_paths):
+    result = run_python(
+        "from brainwhisperer.config.paths import BRAINAUDIO_ROOT",
+        env=env_without_paths,
+    )
     assert result.returncode != 0
-    assert "CARD_ROOT" in result.stderr, result.stderr
+    assert "BRAINAUDIO_ROOT" in result.stderr, result.stderr

@@ -6,6 +6,11 @@ build-backend = "setuptools.build_meta"
 name = "brainwhisperer"
 version = "0.1.0"
 requires-python = ">=3.10"
+dependencies = [
+    "neuralset==0.2.3",
+    # Not on PyPI: install from a local clone until it is pinned to a published commit.
+    "tether-scratch",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

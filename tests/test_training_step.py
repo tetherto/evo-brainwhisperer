@@ -22,8 +22,11 @@ from brainwhisperer.config.schema import (
     BWModelConfig,
     BWTrainingConfig,
 )
-from brainwhisperer.data.collate import NeuralCollator
-from brainwhisperer.data.datasets.card import CardDataset
+from brainwhisperer.data.collate import (
+    SingleRecipeCollator,
+    default_ragged_collator,
+)
+from brainwhisperer.data.recipes import RECIPES
 from brainwhisperer.models.model import BrainWhisperer
 from brainwhisperer.training.lightning_module import BWLightningModule
 
@@ -39,18 +42,28 @@ def tokenizer():
     )
 
 
+CARD_BATCH_SIZE = 4
+CARD_MAX_LABEL_LEN = 448  # seed 6's data.max_seq_len
+
+
 @pytest.fixture(scope="module")
-def card_batch(tokenizer):
-    dataset = CardDataset(split="train")
-    collator = NeuralCollator(tokenizer, max_label_len=448)
-    loader = DataLoader(dataset, batch_size=4, collate_fn=collator, shuffle=False)
+def card_batch():
+    ds = RECIPES["card"].build_val_dataset(max_label_len=CARD_MAX_LABEL_LEN)
+    loader = DataLoader(
+        ds,
+        batch_size=CARD_BATCH_SIZE,
+        collate_fn=SingleRecipeCollator(
+            "card", RECIPES["card"], default_ragged_collator()
+        ),
+        shuffle=False,
+    )
     return next(iter(loader))
 
 
 @pytest.fixture(scope="module")
 def lightning_module(tokenizer):
-    dataset = CardDataset(split="train")
-    num_days = int(dataset._base.days.max().item()) + 1
+    # Day-axis size from the Card recipe.
+    num_days = RECIPES["card"].NUM_DAYS
 
     emb_cfg = BWEmbedderConfig(
         num_features=512,
@@ -96,7 +109,6 @@ def lightning_module(tokenizer):
         gradient_clip_val=1.0,
         ce_coeff=1.0,
         ctc_phone_coeff=1.0,
-        ctc_char_coeff=0.0,
         scheduler="cosine",
         seed=42,
         augmentation=BWAugmentationConfig(
@@ -111,7 +123,7 @@ def lightning_module(tokenizer):
             max_mask_pct=0.075,
         ),
     )
-    model = BrainWhisperer(model_cfg, num_days_per_embedder=[num_days])
+    model = BrainWhisperer(model_cfg, ["card"], num_days_per_embedder=[num_days])
     lm = BWLightningModule(
         model, training_cfg, tokenizer, val_dataloader_names=["card"]
     )

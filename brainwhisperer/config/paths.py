@@ -11,15 +11,8 @@ def _require(var: str) -> str:
     return val
 
 
-CARD_ROOT = _require("CARD_ROOT")
-KUNZ_ROOT = _require("KUNZ_ROOT")
-WILLETT_ROOT = _require("WILLETT_ROOT")
-RNN_ARGS = _require("RNN_ARGS")
-JUDE_PATH = _require("JUDE_PATH")
-WAIRAGKAR_ROOT = _require("WAIRAGKAR_ROOT")
-
 # Required paths for cascaded CTC+LLM decoding eval only,
-# not the training pipeline or E2E
+# read on first access so other entry points never need them.
 _LIGHTBEAM_ONLY_VARS = {
     "BRAINAUDIO_ROOT",
     "LIGHTBEAM_KENLM_PATH",

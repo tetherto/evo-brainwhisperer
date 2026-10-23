@@ -1,8 +1,6 @@
 # @package _global_
-# Full cross-dataset E2E config (paper Section 4): Card + Willett + Kunz T12/T15 +
-# Wairagkar + Jude -- the complete 6-group mixture, matching REFERENCE's `cross-ho` mode
-# (whisper-based/train.py). See WairagkarJude.md for the implementation/verification that
-# went into wairagkar.py/jude.py before this config existed.
+# Full cross-dataset config (paper Section 4): the six-dataset mixture of Card,
+# Willett, Kunz T12, Kunz T15, Wairagkar and Jude, trained end to end on 2 GPUs.
 
 data:
   datasets: [card, willet, kunz_t12, kunz_t15, wairagkar, jude]

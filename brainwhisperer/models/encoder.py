@@ -28,7 +28,6 @@ class BWEncoder(nn.Module):
         super().__init__()
         self.last_phoneme_layer = cfg.last_phoneme_layer
         self.attn_window_size = cfg.attn_window_size
-        self.ref_half_layout = cfg.ref_half_layout  # DEBUG
 
         # Build WhisperEncoderLayer instances from a minimal WhisperConfig.
         layer_config = WhisperConfig(
@@ -67,16 +66,8 @@ class BWEncoder(nn.Module):
         # Add temporal position encoding to last D//2 dims (frozen random; see __init__)
         half = D // 2
         pos_enc = self.pos_encoding[:T]  # (T, D//2)
-        # DEBUG
-        if self.ref_half_layout:
-            # REF convention (pre-refactor/model.py:1178): temporal PE on FIRST half.
-            x = torch.cat(
-                [x[:, :, :half] + pos_enc.unsqueeze(0), x[:, :, half:]], dim=-1
-            )
-        else:
-            x = torch.cat(
-                [x[:, :, :half], x[:, :, half:] + pos_enc.unsqueeze(0)], dim=-1
-            )
+        # Adding temporal PE on the last half
+        x = torch.cat([x[:, :, :half], x[:, :, half:] + pos_enc.unsqueeze(0)], dim=-1)
 
         # Ensuring contiguous memory layout for downstream dropout calls.
         x = x.transpose(1, 2).contiguous().transpose(1, 2)

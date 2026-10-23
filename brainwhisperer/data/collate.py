@@ -1,70 +1,104 @@
-import torch
-from torch.nn.utils.rnn import pad_sequence
-from transformers import PreTrainedTokenizer
+from dataclasses import replace
 
+from tether_scratch.dataloader import PadSpec, RaggedCollator
+
+from brainwhisperer.data.adapter import to_mixed_neural_batch, to_neural_batch
 from brainwhisperer.data.batch import NeuralBatch
+from brainwhisperer.data.collection import MEMBER
+from brainwhisperer.data.fields import DAY, NEURAL, PHONEMES, WHISPER
+from brainwhisperer.utils.fill import fill_to_num_features
 
 
-class NeuralCollator:
+def default_ragged_collator() -> RaggedCollator:
+    """The batch padding contract."""
+    return RaggedCollator(
+        fields={
+            NEURAL: PadSpec(axis=-1, pad_value=0),
+            # -100 = PyTorch CE ignore index, so padded label positions add no loss.
+            WHISPER: PadSpec(axis=-1, pad_value=-100),
+            PHONEMES: PadSpec(axis=-1, pad_value=0),
+            # DAY is left unconfigured: every sample carries the same
+            # (single-value) shape, so the collator just stacks it.
+        }
+    )
+
+
+class MixedRecipeCollator:
+    """Collates one batch of the mixed-dataset collection into a NeuralBatch.
+
+    Each row's member (from `MixedRaggedDataset`'s metadata) picks both the
+    fill rule (``channel_fills``, the same ``CHANNEL_FILL`` values the
+    recipes declare) and its embedder. Padding comes from `default_ragged_collator()`.
     """
-    Collates per-sample dicts into a NeuralBatch.
 
-    Tokenizer is injected so dataset classes stay model-agnostic: swapping the
-    underlying language model only requires passing a different tokenizer here.
-    """
+    # Shared batch field keys; the collection's rows carry the recipes'
+    # data dicts, so these must be the base.py constants.
+    NEURAL = NEURAL
+    WHISPER = WHISPER
+    PHONEMES = PHONEMES
+    DAY = DAY
 
-    def __init__(self, tokenizer: PreTrainedTokenizer, max_label_len: int = 448):
-        self.tokenizer = tokenizer
-        self.max_label_len = max_label_len
+    def __init__(
+        self,
+        channel_fills: dict[str, str],
+        num_features: int = 512,
+    ) -> None:
+        self._fills = dict(channel_fills)
+        self._num_features = num_features
+        self._ragged = default_ragged_collator()
 
-    def __call__(self, batch: list[dict]) -> NeuralBatch:
-        sbj_idx = torch.tensor([s["sbj_idx"] for s in batch], dtype=torch.long)
-
-        feats = [s["neural_features"] for s in batch]  # each (T_i, C)
-        neural_lengths = torch.tensor([f.shape[0] for f in feats], dtype=torch.long)
-        neural_features = pad_sequence(
-            feats, batch_first=True, padding_value=0.0
-        )  # (B, T_max, C)
-
-        day = torch.tensor(
-            [
-                int(s["day"].item())
-                if isinstance(s["day"], torch.Tensor)
-                else int(s["day"])
-                for s in batch
-            ],
-            dtype=torch.long,
+    def __call__(self, batch: list) -> NeuralBatch:
+        if not batch:
+            raise ValueError("MixedRecipeCollator received an empty batch")
+        filled = []
+        for sample in batch:
+            name = sample.metadata[MEMBER]
+            if name not in self._fills:
+                raise KeyError(
+                    f"no CHANNEL_FILL rule for dataset {name!r}; the mixed "
+                    f"collator knows {sorted(self._fills)}"
+                )
+            filled.append(
+                replace(
+                    sample,
+                    data={
+                        **sample.data,
+                        self.NEURAL: fill_to_num_features(
+                            sample.data[self.NEURAL],
+                            self._fills[name],
+                            self._num_features,
+                        ),
+                    },
+                )
+            )
+        return to_mixed_neural_batch(
+            self._ragged(filled),
+            neural=self.NEURAL,
+            whisper=self.WHISPER,
+            phonemes=self.PHONEMES,
+            day=self.DAY,
         )
 
-        tok_out = self.tokenizer(
-            [s["sentence_label"] for s in batch],
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=self.max_label_len,
-        )
 
-        # Strip the leading BOS token and replace padding with -100,
-        # so that CrossEntropyLoss will ignore those positions.
-        # Pad token and EOS IDs are equal in Whisper, so masking
-        # needs to be done via the attention mask to keep the trailing EOS the decoder must learn to emit.
-        labels = tok_out["input_ids"][:, 1:]
-        pad_mask = tok_out["attention_mask"][:, 1:] == 0
-        labels = labels.masked_fill(pad_mask, -100)
+class SingleRecipeCollator:
+    """Collates batches that all belong to ONE recipe into a NeuralBatch.
 
-        # Collate phoneme targets if every sample in the batch provides them.
-        phone_seq = phone_seq_len = None
-        if all("seq_class_ids" in s for s in batch):
-            seqs = [s["seq_class_ids"] for s in batch]
-            phone_seq_len = torch.tensor([len(s) for s in seqs], dtype=torch.long)
-            phone_seq = pad_sequence(seqs, batch_first=True, padding_value=0)
+    The counterpart of `MixedRecipeCollator`: this batch holds a single
+    dataset, so the name is fixed at construction and no per-row
+    `CHANNEL_FILL` is needed (one recipe has one width).
+    """
 
-        return NeuralBatch(
-            signals=neural_features.permute(0, 2, 1),  # (B, T_max, C) → (B, C, T_max)
-            labels=labels,
-            sbj_idx=sbj_idx,
-            day_idx=day,
-            lengths=neural_lengths,
-            phone_seq=phone_seq,
-            phone_seq_len=phone_seq_len,
+    def __init__(self, dataset_name: str, recipe, collator: RaggedCollator) -> None:
+        self._name = dataset_name
+        self._recipe = recipe
+        self._collator = collator
+
+    def __call__(self, samples) -> NeuralBatch:
+        return to_neural_batch(
+            self._collator(samples),
+            self._name,
+            neural=self._recipe.NEURAL,
+            whisper=self._recipe.WHISPER,
+            phonemes=self._recipe.PHONEMES,
+            day=self._recipe.DAY,
         )

@@ -4,16 +4,15 @@ Phase 2 gate check — model layer.
 Run: pytest tests/test_model_forward.py -v
 
 Synthetic tests cover shape/dtype contracts without requiring data on disk.
-TestBrainWhispererRealData requires env vars (CARD_ROOT etc.) via .envrc.
+TestBrainWhispererRealData builds its batch from the Card recipe, so it
+requires the study data mount (tether `dataset_dir("card_2024")`).
 TestBrainWhisperer downloads openai/whisper-tiny.en (~150 MB) on first run.
 """
 
 import pytest
 import torch
 from torch.utils.data import DataLoader
-from transformers import WhisperTokenizer
 
-import brainwhisperer.data.datasets  # noqa: F401 - unused in this script but triggers dataset registration
 from brainwhisperer.config.schema import (
     BWEmbedderConfig,
     BWEncoderConfig,
@@ -21,8 +20,11 @@ from brainwhisperer.config.schema import (
     BWModelConfig,
 )
 from brainwhisperer.data.batch import NeuralBatch
-from brainwhisperer.data.collate import NeuralCollator
-from brainwhisperer.data.registry import get_dataset
+from brainwhisperer.data.collate import (
+    SingleRecipeCollator,
+    default_ragged_collator,
+)
+from brainwhisperer.data.recipes import RECIPES
 from brainwhisperer.models.embedder import BWEmbedder
 from brainwhisperer.models.encoder import BWEncoder
 from brainwhisperer.models.model import BrainWhisperer
@@ -92,7 +94,7 @@ def _batch(n_embedders: int = 1) -> NeuralBatch:
     return NeuralBatch(
         signals=torch.randn(B, N_FEATURES, T_SIGNAL),
         labels=torch.randint(0, 200, (B, 10)),
-        sbj_idx=torch.zeros(B, dtype=torch.long),  # all from embedder 0
+        datasets=["e0"] * B,  # all samples route to embedder "e0"
         day_idx=torch.randint(0, N_DAYS, (B,)),
         lengths=torch.full((B,), T_SIGNAL, dtype=torch.long),
     )
@@ -212,7 +214,7 @@ class TestBWEncoder:
 
 @pytest.fixture(scope="module")
 def model():
-    m = BrainWhisperer(_model_cfg(), num_days_per_embedder=[N_DAYS])
+    m = BrainWhisperer(_model_cfg(), ["e0"], num_days_per_embedder=[N_DAYS])
     m.eval()
     return m
 
@@ -223,7 +225,6 @@ class TestBrainWhisperer:
             out = model(_batch())
         assert "ce_loss" in out
         assert "phone_logits" in out
-        assert "char_logits" in out
         assert "x_len" in out
 
     def test_ce_loss_scalar(self, model):
@@ -236,19 +237,11 @@ class TestBrainWhisperer:
             out = model(_batch())
         assert out["phone_logits"].shape == (B, T_CTC, 41)
 
-    def test_char_logits_shape(self, model):
-        with torch.no_grad():
-            out = model(_batch())
-        # char head vocab == whisper-tiny vocab size
-        assert out["char_logits"].shape[0] == B
-        assert out["char_logits"].shape[1] == T_CTC
-
     def test_no_nan(self, model):
         with torch.no_grad():
             out = model(_batch())
         assert not torch.isnan(out["ce_loss"])
         assert not torch.isnan(out["phone_logits"]).any()
-        assert not torch.isnan(out["char_logits"]).any()
 
     def test_generate_shape(self, model):
         with torch.no_grad():
@@ -262,7 +255,6 @@ class TestBrainWhisperer:
             out = model(_batch(), encoder_only=True)
         assert "ce_loss" not in out, "encoder_only must not return ce_loss"
         assert "phone_logits" in out
-        assert "char_logits" in out
         assert "x_len" in out
         assert out["phone_logits"].shape == (B, T_CTC, 41)
         assert out["x_len"].shape == (B,)
@@ -275,22 +267,19 @@ class TestBrainWhisperer:
 CARD_N_FEATURES = 512
 CARD_N_DAYS = 45
 CARD_BATCH_SIZE = 4
+CARD_MAX_LABEL_LEN = 448  # seed 6's data.max_seq_len
 
 
 @pytest.fixture(scope="module")
-def card_tokenizer():
-    return WhisperTokenizer.from_pretrained(
-        "openai/whisper-small", language="en", task="transcribe"
-    )
-
-
-@pytest.fixture(scope="module")
-def card_batch(card_tokenizer):
-    ds = get_dataset("card")(split="train")
+def card_batch():
+    """First CARD_BATCH_SIZE val trials as a NeuralBatch, via the Card recipe."""
+    ds = RECIPES["card"].build_val_dataset(max_label_len=CARD_MAX_LABEL_LEN)
     loader = DataLoader(
         ds,
         batch_size=CARD_BATCH_SIZE,
-        collate_fn=NeuralCollator(card_tokenizer),
+        collate_fn=SingleRecipeCollator(
+            "card", RECIPES["card"], default_ragged_collator()
+        ),
         shuffle=False,
     )
     return next(iter(loader))
@@ -320,7 +309,7 @@ def card_model():
             r=4, alpha=8, dropout=0.0, target_modules=["q_proj", "v_proj"]
         ),
     )
-    m = BrainWhisperer(cfg, num_days_per_embedder=[CARD_N_DAYS])
+    m = BrainWhisperer(cfg, ["card"], num_days_per_embedder=[CARD_N_DAYS])
     m.eval()
     return m
 
@@ -331,7 +320,6 @@ class TestBrainWhispererRealData:
             out = card_model(card_batch)
         assert not torch.isnan(out["ce_loss"]), "ce_loss is NaN on real data"
         assert not torch.isnan(out["phone_logits"]).any(), "phone_logits has NaN"
-        assert not torch.isnan(out["char_logits"]).any(), "char_logits has NaN"
 
     def test_forward_output_shapes(self, card_model, card_batch):
         B = CARD_BATCH_SIZE
@@ -341,8 +329,6 @@ class TestBrainWhispererRealData:
             out = card_model(card_batch)
         assert out["ce_loss"].shape == ()
         assert out["phone_logits"].shape == (B, T_ctc, 41)
-        assert out["char_logits"].shape[0] == B
-        assert out["char_logits"].shape[1] == T_ctc
 
     def test_x_len_valid(self, card_model, card_batch):
         """x_len must be in (0, T_ctc] for every sample and match batch.lengths."""

@@ -14,7 +14,16 @@ On the publicly available BrainGate Utah array datasets, BrainWhisperer achieves
 
 ## Setup
 
-**1. Clone and install**
+**1. Install `tether_scratch`**
+
+BrainWhisperer reads its datasets through the `tether_scratch` library, which is not on PyPI yet. Clone it and install it into your environment:
+
+```bash
+git clone <tether_scratch-repo-url>
+pip install -e ./tether_scratch
+```
+
+**2. Install BrainWhisperer**
 
 ```bash
 git clone <repo-url>
@@ -22,36 +31,65 @@ cd evo-brainwhisperer
 pip install -e .
 ```
 
-**2. Set data paths**
+`requirements-paper.txt` lists the exact package versions used for the paper's runs.
 
-All dataset paths are read from environment variables — no paths are hardcoded. Add these to your shell profile or job script:
+**3. Get the data**
 
-```bash
-export CARD_ROOT=/path/to/nejm-brain-to-text        # Card participant data
-export KUNZ_ROOT=/path/to/cross_participant_speech   # Kunz participant data
-export WILLETT_ROOT=/path/to/speech_decoding_BCI     # Willett dataset
-export RNN_ARGS=/path/to/rnn_args.yaml               # upstream model args
-export JUDE_PATH=/path/to/jude_data                  # Jude participant data
-export WAIRAGKAR_ROOT=/path/to/wairagkar_data        # Wairagkar participant data
-```
-
-`eval_lightbeam.py` (cascaded CTC+KenLM+LLM decoding eval) additionally
-requires `BRAINAUDIO_ROOT`, `LIGHTBEAM_KENLM_PATH`, `LIGHTBEAM_ADAPTER_PATH`, and
-`HF_TOKEN`, as described in script's module docstring.
-
-**3. Run**
+The datasets are not included. Download the six datasets (Card, Willett, Kunz T12 and T15, Wairagkar, Jude) by following the `tether_scratch` docs, then point it at the folder that holds them:
 
 ```bash
-python train.py                          # base config, single GPU
-python train.py experiment=cross_dataset  # a named experiment override (config/experiment/)
-python train.py training.devices=4        # ad hoc Hydra override, e.g. multi-GPU
-python -m brainwhisperer.training.launcher --slurm training.devices=4  # submit via SLURM
-python eval.py --help                     # checkpoint → WER/CER/PER
+export TETHER_DATA_ROOT=/path/to/datasets
 ```
 
-See the detailed [architectural breakdown](ARCHITECTURE.md) for the package layout, the config system, and a
-line-by-line walkthrough of `train.py` detailed execution; and the [design notes](DESIGN.md) for
-the non-obvious design decisions behind it.
+Some datasets are hosted on Dryad, which needs a personal token to download (`NEURALFETCH_DRYAD_TOKEN`, see the `tether_scratch` docs).
+
+**4. Optional environment variables**
+
+| Variable | Needed for |
+|---|---|
+| `WANDB_API_KEY` | logging to Weights & Biases (`wandb.enabled=true`) |
+| `MASTER_PORT` | running more than one multi-GPU job on the same machine |
+| `BRAINAUDIO_ROOT`, `LIGHTBEAM_KENLM_PATH`, `LIGHTBEAM_ADAPTER_PATH`, `HF_TOKEN` | `eval_lightbeam.py` only; see the top of that script |
+
+---
+
+## Usage
+
+**Train**
+
+```bash
+python train.py                                   # default config: Card only, one GPU
+python train.py experiment=cross_dataset_full     # the full six-dataset model from the paper (2 GPUs)
+python train.py training.devices=4 training.seed=3  # change any config value on the command line
+```
+
+Each run writes its checkpoints, logs and full `config.yaml` to a folder under `outputs/`.
+
+**Launch several seeds or a SLURM job**
+
+```bash
+python -m brainwhisperer.training.launcher --seeds 1,2,3 experiment=cross_dataset_full
+python -m brainwhisperer.training.launcher --slurm training.devices=4
+python -m brainwhisperer.training.launcher --slurm --dry-run training.devices=4  # print the job script only
+```
+
+**Evaluate**
+
+```bash
+python eval.py --checkpoint <run_dir>/checkpoints/best-epoch=XXXX.ckpt --config <run_dir>/config.yaml
+```
+
+This prints WER, CER and PER for every dataset in the run. Add `--set key=value` to change config values for the evaluation only, for example `--set data.batch_size=32`.
+
+`eval_lightbeam.py` takes the same two arguments and decodes Card from the CTC phoneme head with an n-gram and a large language model. Use the `best-per-epoch=XXXX.ckpt` checkpoint for it.
+
+**Tests**
+
+```bash
+pytest
+```
+
+For how the code is organised, how data flows through it and where to make changes, see [ARCHITECTURE.md](ARCHITECTURE.md). [DESIGN.md](DESIGN.md) explains the less obvious design choices.
 
 ---
 

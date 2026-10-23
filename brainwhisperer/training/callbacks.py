@@ -128,7 +128,7 @@ class VizCallback(Callback):
         batch = NeuralBatch(
             signals=self._batch.signals.to(device),
             labels=self._batch.labels.to(device),
-            sbj_idx=self._batch.sbj_idx.to(device),
+            datasets=self._batch.datasets,
             day_idx=self._batch.day_idx.to(device),
             lengths=self._batch.lengths.to(device),
         )
@@ -136,13 +136,14 @@ class VizCallback(Callback):
         figs: dict = {}
 
         with torch.no_grad():
-            embedded = model._embed(batch.signals, batch.sbj_idx, batch.day_idx)
+            embedded = model._embed(batch.signals, batch.datasets, batch.day_idx)
             enc_out = model.encoder(embedded)
 
         figs["embeddings/patch_embeddings"] = plot_patch_embeddings(embedded)
+        first_embedder = next(iter(model.embedders.values()))
         figs["embeddings/day_encoding"] = plot_day_encoding(
-            model.embedders[0],
-            torch.arange(model.embedders[0].num_days, device=device),
+            first_embedder,
+            torch.arange(first_embedder.num_days, device=device),
         )
         figs["encoder/hidden_state_norms"] = plot_hidden_state_norms(enc_out)
         figs["encoder/windowed_attention_mask"] = plot_windowed_attention_mask(

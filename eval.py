@@ -1,6 +1,7 @@
 """Evaluation entry point: load checkpoint → run inference → report WER / CER / PER."""
 
 import argparse
+import sys
 from pathlib import Path
 
 import torch
@@ -8,33 +9,18 @@ from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 from transformers import WhisperTokenizer
 
-import brainwhisperer.config.schema
-import brainwhisperer.data.datasets  # noqa: F401 - unused in this script but triggers dataset registration
 from brainwhisperer.config.schema import BWConfig
-from brainwhisperer.data.augmentations import transform_data
-from brainwhisperer.data.batch import NeuralBatch
-from brainwhisperer.data.collate import NeuralCollator
-from brainwhisperer.data.registry import get_dataset
+from brainwhisperer.data.adapter import to_neural_batch
+from brainwhisperer.data.collate import default_ragged_collator
+from brainwhisperer.data.recipes import RECIPES
 from brainwhisperer.models.model import BrainWhisperer
+from brainwhisperer.prediction import predict_batch
 from brainwhisperer.utils.metrics import (
     char_error_rate,
     phoneme_error_rate,
     word_error_rate,
 )
-from brainwhisperer.utils.sessions import SESSIONS_BY_DATASET, sessions_to_calendar_days
 from brainwhisperer.utils.text import build_normalizer
-
-
-def _ctc_decode_phones(
-    phone_logits: torch.Tensor, x_len: torch.Tensor
-) -> list[list[int]]:
-    """Greedy CTC decode: argmax → collapse consecutive → strip blanks (class 0)."""
-    result = []
-    for i in range(phone_logits.shape[0]):
-        decoded = torch.argmax(phone_logits[i, : x_len[i], :].detach(), dim=-1)
-        decoded = torch.unique_consecutive(decoded).cpu().numpy()
-        result.append([int(p) for p in decoded if p != 0])
-    return result
 
 
 def main() -> None:
@@ -59,16 +45,26 @@ def main() -> None:
         default=None,
         help="Override batch size from config (useful for memory-constrained eval)",
     )
+    parser.add_argument(
+        "--set",
+        dest="overrides",
+        nargs="*",
+        metavar="KEY=VALUE",
+        default=[],
+        help="Overrides merged after the saved config, e.g. "
+        "--set data.batch_size=32 (leaves the saved config.yaml untouched)",
+    )
     args = parser.parse_args()
 
     # ------------------------------------------------------------------
     # Config: merge saved YAML onto the structured schema to restore
     # Python types that get lost with the config being saved to YAML and reloaded.
     # ------------------------------------------------------------------
-    cfg = OmegaConf.merge(
-        OmegaConf.structured(BWConfig),
-        OmegaConf.load(args.config),
-    )
+    cfg = OmegaConf.merge(OmegaConf.structured(BWConfig), OmegaConf.load(args.config))
+    if args.overrides:
+        cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(args.overrides))
+    # The resolved config goes to stderr so stdout holds only the scores.
+    print(OmegaConf.to_yaml(cfg), file=sys.stderr)
     batch_size = args.batch_size or cfg.data.batch_size
     device = torch.device(args.device)
 
@@ -84,22 +80,19 @@ def main() -> None:
     }
 
     # ------------------------------------------------------------------
-    # Tokenizer + collator
+    # Tokenizer
     # ------------------------------------------------------------------
     tokenizer = WhisperTokenizer.from_pretrained(
         cfg.model.whisper_name, language="en", task="transcribe"
     )
-    collator = NeuralCollator(tokenizer, max_label_len=cfg.data.max_seq_len)
     normalizer = build_normalizer()
 
     # ------------------------------------------------------------------
-    # Validation datasets (same `sbj_idx` assignment as training)
+    # Validation datasets
     # ------------------------------------------------------------------
-    dataset_classes = [get_dataset(name) for name in cfg.data.datasets]
-    num_days_per_embedder = [cls.NUM_DAYS for cls in dataset_classes]
+    num_days_per_embedder = [RECIPES[name].NUM_DAYS for name in cfg.data.datasets]
     calendar_days_per_embedder = [
-        sessions_to_calendar_days(SESSIONS_BY_DATASET[name])
-        for name in cfg.data.datasets
+        RECIPES[name].calendar_days() for name in cfg.data.datasets
     ]
     # Ensuring a checkpoint trained with per-dataset overrides evaluates
     # with the same per-embedder encodings/day_proj_rank it was trained with.
@@ -107,16 +100,36 @@ def main() -> None:
         OmegaConf.merge(cfg.model.embedder, cfg.data.embedder_overrides.get(name, {}))
         for name in cfg.data.datasets
     ]
+    # Fill-to-512 rule per dataset: each recipe declares CHANNEL_FILL;
+    # datasets without a fill rule declare "none".
+    channel_fills_per_embedder = [
+        RECIPES[name].CHANNEL_FILL for name in cfg.data.datasets
+    ]
     val_names = list(cfg.data.datasets)
 
+    # Every dataset comes from its recipe; batches use the default ragged
+    # collator. eval.py adapts a ragged batch to a NeuralBatch in its own
+    # loop (SingleRecipeCollator is the DataLoader-side twin of this two-step).
     val_loaders = []
-    for i, cls in enumerate(dataset_classes):
-        val_ds = cls(split=cls.VAL_SPLIT, sbj_idx=i)
+    val_adapters = []
+    for name in val_names:
+        recipe = RECIPES[name]  # KeyError = no recipe for this dataset
+        val_ds = recipe.build_val_dataset(max_label_len=cfg.data.max_seq_len)
+        val_adapters.append(
+            lambda raw, n=name, r=recipe: to_neural_batch(
+                raw,
+                n,
+                neural=r.NEURAL,
+                whisper=r.WHISPER,
+                phonemes=r.PHONEMES,
+                day=r.DAY,
+            )
+        )
         val_loaders.append(
             DataLoader(
                 val_ds,
                 batch_size=batch_size,
-                collate_fn=collator,
+                collate_fn=default_ragged_collator(),
                 num_workers=cfg.data.num_workers,
                 shuffle=False,
             )
@@ -127,18 +140,13 @@ def main() -> None:
     # ------------------------------------------------------------------
     model = BrainWhisperer(
         cfg.model,
+        list(cfg.data.datasets),
         num_days_per_embedder,
         calendar_days_per_embedder,
         embedder_cfg_per_embedder,
+        channel_fills=channel_fills_per_embedder,
     )
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    # Lightning stores submodule weights under "model.*" (self.model = BrainWhisperer)
-    state = {
-        k.removeprefix("model."): v
-        for k, v in ckpt["state_dict"].items()
-        if k.startswith("model.")
-    }
-    model.load_state_dict(state)
+    model.load_checkpoint(args.checkpoint)
     model = model.to(device)
     model.eval()
 
@@ -147,62 +155,29 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Inference loop
     # ------------------------------------------------------------------
-    for name, loader in zip(val_names, val_loaders):
+    for name, loader, adapt in zip(val_names, val_loaders, val_adapters):
         hyps: list[str] = []
         refs: list[str] = []
         phone_hyps: list[list[int]] = []
         phone_refs: list[list[int]] = []
 
         with torch.no_grad():
-            for batch in loader:
-                batch = NeuralBatch(
-                    signals=batch.signals.to(device),
-                    labels=batch.labels.to(device),
-                    sbj_idx=batch.sbj_idx.to(device),
-                    day_idx=batch.day_idx.to(device),
-                    lengths=batch.lengths.to(device),
-                    phone_seq=batch.phone_seq.to(device)
-                    if batch.phone_seq is not None
-                    else None,
-                    phone_seq_len=batch.phone_seq_len.to(device)
-                    if batch.phone_seq_len is not None
-                    else None,
+            for raw in loader:
+                # Recipe batches are ragged; adapt to a NeuralBatch,
+                # tensor-for-tensor.
+                batch = adapt(raw)
+                result = predict_batch(
+                    model,
+                    batch.to_device(device),
+                    tokenizer=tokenizer,
+                    gen_kwargs=gen_kwargs,
+                    aug_kwargs=aug_kwargs,
+                    measure_per=measure_per,
                 )
-
-                x_val, len_val = transform_data(
-                    batch.signals, batch.lengths, mode="val", **aug_kwargs
-                )
-                val_batch = NeuralBatch(
-                    signals=x_val,
-                    labels=batch.labels,
-                    sbj_idx=batch.sbj_idx,
-                    day_idx=batch.day_idx,
-                    lengths=len_val,
-                    phone_seq=batch.phone_seq,
-                    phone_seq_len=batch.phone_seq_len,
-                )
-
-                # WER: free generation with beam search.
-                generated_ids = model.generate(val_batch, **gen_kwargs)
-                transcriptions = tokenizer.batch_decode(
-                    generated_ids, skip_special_tokens=True
-                )
-                label_ids = batch.labels.clone()
-                label_ids[label_ids == -100] = tokenizer.pad_token_id
-                target_texts = tokenizer.batch_decode(
-                    label_ids, skip_special_tokens=True
-                )
-                hyps.extend(transcriptions)
-                refs.extend(target_texts)
-
-                # PER: encoder-only forward to obtain phone logits
-                if measure_per and batch.phone_seq is not None:
-                    out = model(val_batch, encoder_only=True)
-                    decoded = _ctc_decode_phones(out["phone_logits"], out["x_len"])
-                    phone_hyps.extend(decoded)
-                    for i in range(batch.phone_seq.shape[0]):
-                        seq_len = int(batch.phone_seq_len[i])
-                        phone_refs.append(batch.phone_seq[i, :seq_len].cpu().tolist())
+                hyps.extend(result.hyps)
+                refs.extend(result.refs)
+                phone_hyps.extend(result.phone_hyps)
+                phone_refs.extend(result.phone_refs)
 
         hyps_norm = [normalizer(t) for t in hyps]
         refs_norm = [normalizer(t) for t in refs]

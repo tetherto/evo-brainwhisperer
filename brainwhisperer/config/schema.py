@@ -22,7 +22,6 @@ class BWEmbedderConfig:
     dropout: float = MISSING  # patch-mode embedding dropout
     day_layer_dropout: float = MISSING  # dropout after the per-day projection
     session_dropout: float = MISSING  # dropout on the session encoding
-    ref_half_layout: bool = False  # DEBUG: A/B flag: True → session enc on LAST half (REF convention); False → first half (CANDIDATE)
 
 
 @dataclass
@@ -41,7 +40,6 @@ class BWEncoderConfig:
     temporal_pe_std: float = MISSING
     attn_window_size: int = MISSING  # tokens each position can attend to left+right
     rope: bool = MISSING  # T5-style relative position bias (unused in logged runs)
-    ref_half_layout: bool = False  # DEBUG: A/B flag: True → temporal PE on FIRST half (REF convention); False → last half (CANDIDATE)
 
 
 @dataclass
@@ -64,7 +62,9 @@ class BWModelConfig:
 
 @dataclass
 class BWDataConfig:
-    datasets: list[str] = MISSING  # registered dataset names, e.g. [card, kunz_t12]
+    datasets: list[str] = (
+        MISSING  # dataset names, e.g. [card, kunz_t12]; one per embedder
+    )
     batch_size: int = MISSING  # global batch size across all GPUs; per-rank = batch_size // world_size
     num_workers: int = MISSING
     max_seq_len: int = MISSING  # max token length for Whisper decoder
@@ -96,7 +96,6 @@ class BWTrainingConfig:
     gradient_clip_val: float = MISSING
     ce_coeff: float = MISSING
     ctc_phone_coeff: float = MISSING
-    ctc_char_coeff: float = MISSING
     scheduler: str = MISSING  # "cosine" | "linear" | "sequential"
     seed: int = MISSING
     unfreeze_decoder_epoch: int = (
@@ -118,7 +117,7 @@ class BWWandbConfig:
     enabled: bool = False
     project: str = "brainwhisperer"
     entity: str = ""  # blank = wandb account default; set per-team/experiment
-    group: str = ""  # e.g. "cross_dataset" 
+    group: str = ""  # e.g. "cross_dataset"
     tags: list[str] = field(default_factory=list)
     mode: str = "online"  # "online" | "offline" | "disabled"
 

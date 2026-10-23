@@ -1,210 +1,179 @@
 # Architecture
 
-A map of BrainWhisperer for developers to find their way around this modular package: what data flows through the system, what each module does, where to find it, and how the pieces connect at runtime.
+This page explains how BrainWhisperer is organised: what each part of the code does, how data moves through it, and where to make common changes.
 
----
+## Key terms
 
-## Repo layout
+- **Recipe**: the code that turns one public dataset into training and validation samples. There is one recipe per dataset (`card`, `willet`, `kunz_t12`, `kunz_t15`, `wairagkar`, `jude`).
+- **`NeuralBatch`**: the batch format the model reads. Every data path ends in this one class.
+- **Embedder**: the first block of the model. Each dataset has its own embedder, which turns that dataset's neural signals into tokens that Whisper's encoder can read.
+- **Day**: a recording session (or block). The embedders learn small per-day corrections, because neural signals drift from one session to the next.
+
+## Repository layout
 
 ```
 evo-brainwhisperer/
-├── train.py                 # Entry point: cfg → datasets → model → BWLightningModule → Trainer.fit
-├── eval.py                  # Entry point: load checkpoint → run inference → report WER/CER/PER
-├── eval_lightbeam.py        # Entry point: cascaded CTC+KenLM+Llama-3.2 LoRA decoding eval (Card only)
-├── tests/                   # One test file per module below, roughly 1:1 (see "Reading order")
-├── notebooks/               # Exploratory notebooks, not part of the package
-├── outputs/                 # Hydra run outputs (checkpoints, logs, saved configs) [gitignored]
-│
-└── brainwhisperer/            # Main package. Dependencies flow downward the graph: viz/ and training/ can
-    │                          # import from data/ and models/; data/ and models/ never import viz/.
+├── train.py               # Train a model
+├── eval.py                # Score a checkpoint: WER, CER and PER per dataset
+├── eval_lightbeam.py      # Score a checkpoint with CTC beam search + language models (Card only)
+├── tests/                 # Unit and regression tests
+├── notebooks/             # Exploration notebooks (not part of the package)
+├── outputs/               # Run folders: checkpoints, logs, saved config (not tracked by git)
+└── brainwhisperer/
     ├── config/
-    │   ├── base.yaml          # Hydra root config: defaults [base_config, _self_, optional experiment]
-    │   ├── schema.py          # Typed dataclasses (BWConfig and its sub-configs) registered to Hydra's ConfigStore
-    │   ├── paths.py           # Env-var-backed path constants: the only place paths are read, no hard-coded strings in the code
-    │   └── experiment/        # YAML overrides layered on base.yaml (format `experiment=<name>`)
-    │    
-    │
+    │   ├── schema.py          # Every config option, as typed dataclasses with defaults
+    │   ├── base.yaml          # Default values used by train.py
+    │   ├── experiment/        # Named overrides, e.g. the full six-dataset run
+    │   └── paths.py           # Paths read from environment variables (LightBeam only)
     ├── data/
-    │   ├── batch.py              # NeuralBatch, the data/model contract
-    │   ├── registry.py           # Register datasets to their classes
-    │   ├── datasets/             # One self-contained class per dataset 
-    │   ├── samplers.py           # StratifiedDayBatchSampler
-    │   ├── collate.py            # NeuralCollator: List[dict] → NeuralBatch
-    │   └── augmentations.py      # Data processing functions
-    │
+    │   ├── recipes/           # One recipe per dataset, plus the shared base class
+    │   ├── rescale/           # Per-dataset normalisation used inside the recipes
+    │   ├── splits/            # Fixed lists of held-out trials (JSON) for Wairagkar and Jude
+    │   ├── fields.py          # Names of the fields in each sample (neural, whisper, phonemes, day)
+    │   ├── collection.py      # Joins the six training sets into one dataset for the sampler
+    │   ├── collate.py         # Turns a list of samples into a padded batch
+    │   ├── adapter.py         # Converts that padded batch into a NeuralBatch
+    │   ├── batch.py           # NeuralBatch
+    │   └── augmentations.py   # Noise, time cuts, smoothing and masking, applied during training
     ├── models/
-    │   ├── positional_encoding.py    # PositionalEncoding (sinusoidal table, shared by embedder + encoder)
-    │   ├── embedder.py               # BWEmbedder (raw signals → projected + tokenised + day-encoded)
-    │   ├── encoder.py                # BWEncoder (embedded patches → BaseModelOutput)
-    │   └── model.py                  # BrainWhisperer, the full top-level assembly: embedders + encoder + Whisper+LoRA
-    │
+    │   ├── embedder.py            # BWEmbedder: neural signals -> tokens, with per-day corrections
+    │   ├── encoder.py             # BWEncoder: Whisper's encoder with windowed attention
+    │   ├── positional_encoding.py # Sinusoidal position table shared by embedder and encoder
+    │   └── model.py               # BrainWhisperer: embedders + encoder + Whisper decoder (LoRA)
     ├── training/
-    │   ├── lightning_module.py       # BWLightningModule (two-phase training_step, validation_step)
-    │   ├── losses.py                 # CTC loss function
-    │   ├── callbacks.py              # Training-related callbacks
-    │   └── launcher.py               # SLURM sbatch / torchrun submission, standalone-runnable
-    │
+    │   ├── lightning_module.py    # BWLightningModule: training and validation steps
+    │   ├── losses.py              # CTC loss
+    │   ├── callbacks.py           # Decoder unfreezing, training figures
+    │   └── launcher.py            # Start runs with torchrun, SLURM, or several seeds in a row
+    ├── prediction.py          # One batch in, text and phoneme predictions out (used by eval.py)
     ├── utils/
-    │   ├── metrics.py                # Computes word error rate, char error rate and phoneme error rate
-    │   ├── text.py                   # Text-processing utils
-    │   └── sessions.py               # Session-handling utils
-    │
-    └── viz/                          # Visualization scripts, used in notebooks and training
-        ├── data_pipeline.py          # Dataset structure and batch anatomy diagrams
-        ├── augmentations.py          # Before/after augmentation figures
-        ├── embeddings.py             # Conv. pipeline, patch embeddings, day-projection PCA plots
-        ├── encoder.py                # Encoder/attention/FFN block diagrams
-        ├── training.py               # Loss an WER curves
-        └── animations.py             # Manim animations
+    │   ├── fill.py            # Widens narrow datasets to the model's 512 input channels
+    │   ├── metrics.py         # WER, CER and PER
+    │   └── text.py            # Text normalisation (english.json holds the spelling map)
+    └── viz/                   # Figures for notebooks and training logs
 ```
 
+Dependencies only point one way: `config/` depends on nothing, `models/` reads `config/` and `data/batch.py`, and `training/` and `viz/` may use anything else. `data/` never imports from `models/`.
 
----
-
-## Suggested reading order
-
-The fastest way to understand the architecture is to follow execution order, not directory alphabetization:
-
-1. **`brainwhisperer/data/batch.py`**: `NeuralBatch`. Every module's input/output contract is expressed in terms of this one dataclass; its fields represent what every downstream stage receives.
-2. **`brainwhisperer/config/schema.py`** shows all the dataclasses and their what's configurable parameters
-3. **`train.py`** is the composition root, showing the  path through the whole system:  config → datasets → dataloaders → model → Lightning wrapper → callbacks → `Trainer.fit`.
-   See the walkthrough below.
-4. **`brainwhisperer/models/model.py`** (`BrainWhisperer`) and **`training/lightning_module.py`** (`BWLightningModule`) shape how batches are used for loss computation.
-5. After understanding call trace and contracts from step 1 to 4, any leaf module can be read standalone as each is self-contained.
-
-The `tests/` directory is also useful to understand the codebase: `test_data_layer.py` / `test_data_numerical.py` /
-`test_ddp_sampler.py` show `data/` implementations, `test_embedder_numerical.py` / `test_encoder_windowed_attention.py`
-/ `test_model_forward.py` / `test_init_parity.py` show `models/` implementations, `test_losses.py` / `test_training_step.py` show `training/` implementations.
-
----
-
-## Configuration system
-
-The configuration system is based on Hydra typed dataclasses and composed in layers. Nothing is inferred or defaulted at runtime:
-
-1. **`config/schema.py`** defines `BWConfig` and its sub-configs (`BWModelConfig`,
-   `BWDataConfig`, `BWTrainingConfig`, `BWAugmentationConfig`, `BWVizConfig`, `BWWandbConfig`,
-   `BWGenerationConfig`, …) and registers `BWConfig` with Hydra's `ConfigStore` under the name
-   `base_config`.
-2. **`config/base.yaml`** is the entry Hydra reads (`@hydra.main(config_path="brainwhisperer/config", config_name="base")`
-   in `train.py`).Hydra reading order starts from the schema's defaults, then overrides with the values written directly in
-   `base.yaml`, then optionally layers one file from `config/experiment/`.
-3. **`config/experiment/*.yaml`** files are named overrides selected from the CLI. For instance, running `python train.py experiment=cross_dataset` layers `config/experiment/cross_dataset.yaml` on top of `base.yaml`. Each experiment file is intentionally partial: it states only what differs from the base, for the sake of readability.
-4. Any Hydra dotted override also works ad-hoc on the CLI. Setting `training.devices=4`, without a named experiment file overrides the number of devices listed in the base configuration for that specific run.
-
----
-
-## How a training run actually executes
-
-The call trace through `train.py`, works as follow:
-
-1. `@hydra.main` (`train.py:37`) resolves `cfg` from `base.yaml` + schema defaults + any `experiment=` / CLI overrides.
-2. **Multi-GPU delegation** (`train.py:44`): if `cfg.training.devices > 1` and the process wasn't launched by `torchrun`/`torchelastic` already (`_needs_torchrun`, `train.py:28`),
-   `main()` re-execs itself under `torch.distributed.run` and returns. The actual training only happens in these newly spawned children processes. 
-3. **Dataset construction** (`train.py:109-134`): `cfg.data.datasets` (a list of registry names, e.g. `[card, willet, kunz_t12, kunz_t15]`) is resolved via `get_dataset()` to classes; since datasets are mapped to their embedders through their list position, `cfg.model.n_embedders` must equal `len(cfg.data.datasets)` (asserted at `train.py:88`). Nore that this needs to be enforced *manually*.
-4. **DataLoaders**: train datasets are wrapped in one `ConcatDataset` and driven by `StratifiedDayBatchSampler` (`train.py:139-153`); each val dataset gets its own plain `DataLoader` (`train.py:122-134`), so validation metrics stay per-dataset (`val_wer_<name>` etc., not pooled).
-5. **Model + Lightning wrapper** (`train.py:158-164`): `BrainWhisperer(cfg.model, ...)` is built once, then wrapped in `BWLightningModule(model, cfg.training, tokenizer, val_names)`.  
-Everything past this point is standard `pytorch_lightning.Trainer`: data augmentation, the two-phase CE/CTC step, and loss computation are all wrapped in  `BWLightningModule.training_step` / `.validation_step`.
-6. **Callbacks** (`train.py:172-202`): `ModelCheckpoint` on `val_wer_<val_names[0]>` is always executed; a second `ModelCheckpoint` on `val_per_<val_names[0]>` is only executed if `cfg.training.ctc_phone_coeff > 0` (storing the best model for LightBeam eval); `UnfreezeWhisperDecoder` is always executed, parameterized by `cfg.training.unfreeze_decoder_epoch`; `VizCallback` only executed if visualization is enabled  (`cfg.viz.enabled`).
-7. Finally, **`trainer.fit(...)`** (`train.py:248`) starts training execution.
-
----
-
-## Data flow
+## How the pieces fit
 
 ```
-Raw pickle files
-│
-│  brainwhisperer/data/datasets/
-│  (CardDataset / WilletDataset / KunzT12Dataset / KunzT15Dataset /
-│   JudeDataset / WairagkarDataset)
-│
-▼
-Per-sample dict
-  {neural_features: Tensor (T, C),  sentence_label: str,
-   sbj_idx: int,  day: Tensor,  seq_class_ids: Tensor (optional, phone-level
-   CTC targets — present only for datasets that provide phoneme labels), ...}
-│
-│  brainwhisperer/data/samplers.py
-│  StratifiedDayBatchSampler — selects which samples form each batch,
-│  stratified by recording day and subject group
-│
-▼
-List[dict]  (one batch)
-│
-│  brainwhisperer/data/collate.py
-│  NeuralCollator — pads variable-length signals, tokenises labels,
-│  permutes signals to channels-first; collates seq_class_ids into
-│  phone_seq/phone_seq_len only if every sample in the batch has one,
-│  else leaves both None
-│
-▼
-NeuralBatch
-  signals:        (B, C, T)   raw neural signals, channels-first
-  labels:         (B, L)      Whisper token ids
-  sbj_idx:        (B,)        per-sample BWEmbedder routing key
-  day_idx:        (B,)        per-sample session encoding index
-  lengths:        (B,)        valid signal length per sample
-  phone_seq:      (B, S)|None CTC phoneme targets; 0 = blank
-  phone_seq_len:  (B,)|None   actual phone sequence lengths
-│
-│  brainwhisperer/data/augmentations.py
-│  transform_data() — applied inside training_step, not the DataLoader:
-│    train: gain noise, white noise, offset noise, random walk,
-│           time cut, gaussian smoothing, time masking
-│    val:   gaussian smoothing only
-│
-▼
-Augmented NeuralBatch [flowing into BrainWhisperer model]
+tether_scratch datasets on disk
+        │
+        ▼
+recipes (data/recipes/)        one per dataset: select trials, normalise, cut into samples
+        │
+        ▼
+collation (data/collate.py)    pad samples to equal length, widen to 512 channels
+        │
+        ▼
+NeuralBatch (data/batch.py)
+        │
+        ▼
+BrainWhisperer (models/)       embedder per dataset → encoder → Whisper decoder + CTC head
+        │
+        ▼
+text and phoneme predictions → WER / CER / PER
 ```
 
----
+The datasets themselves are downloaded and read by the `tether_scratch` library, which this package depends on. Everything that is specific to BrainWhisperer (which trials, which channels, how to normalise) lives in the recipes.
 
-## Module map
+## Configuration
 
-| Stage | Directory / file | Key class or function |
+Configuration uses [Hydra](https://hydra.cc) with typed dataclasses.
+
+1. `config/schema.py` defines every option and its default (`BWConfig` and its parts: model, data, training, generation, viz, wandb).
+2. `config/base.yaml` sets the values `train.py` starts from. By default it trains on Card only.
+3. `config/experiment/*.yaml` files hold named overrides. Each one lists only what differs from the base. `python train.py experiment=cross_dataset_full` trains the full six-dataset model from the paper; `cross_dataset_full_wandb` does the same and logs to Weights & Biases.
+4. Any single option can be overridden on the command line, for example `python train.py training.devices=4`.
+
+Every option must be declared in `schema.py`; the code never reads a key that the schema does not define. At the end of setup, `train.py` saves the full resolved config to `<run_dir>/config.yaml`. The evaluation scripts rebuild the model from that file.
+
+## A training run, step by step
+
+`train.py` is the best place to start reading: it connects every part of the system.
+
+1. **Read the config.** Hydra merges the schema defaults, `base.yaml`, an optional experiment file and any command-line overrides.
+2. **Start more processes for multi-GPU runs.** If `training.devices > 1` and the script is not already running under `torchrun`, it restarts itself with `torch.distributed.run`, one process per GPU, and the first process just waits.
+3. **Ask each recipe for model settings.** For every name in `data.datasets`, the recipe in `RECIPES` gives the number of recording days (`NUM_DAYS`), the calendar date of each day (`calendar_days()`), and how to widen its channels to 512 (`CHANNEL_FILL`). `model.n_embedders` must equal the number of datasets.
+4. **Build the validation loaders.** Each dataset gets its own loader, so validation scores are reported per dataset (`val_wer_card`, `val_wer_willet`, …). The six datasets are built in parallel.
+5. **Build the training loader.** The six training sets are joined into one dataset (`build_train_collection`). A sampler from `tether_scratch` (`StratifiedBatchSampler`) fills each batch with trials from a fixed number of (dataset, day) groups (`data.days_per_batch`) and splits it across GPUs. `MixedRecipeCollator` pads the trials and widens each one to 512 channels.
+6. **Build the model.** `BrainWhisperer` is created with one embedder per dataset and wrapped in `BWLightningModule`, which holds the training logic.
+7. **Add callbacks and loggers.** A checkpoint is saved for the best WER on the first dataset (`best-epoch=….ckpt`), and, when the CTC loss is on, another for the best PER (`best-per-epoch=….ckpt`, used by LightBeam). `UnfreezeWhisperDecoder` unfreezes the Whisper decoder at a set epoch. Training figures are added when `viz.enabled` is true. Metrics go to a CSV log, and to Weights & Biases when `wandb.enabled` is true.
+8. **Save the config and train.** The resolved config is written to `config.yaml`, then `trainer.fit` runs.
+
+Each training step (`BWLightningModule.training_step`) has two parts that share the same noise:
+
+- **Part 1, cross-entropy:** the noisy signal is smoothed and passed through the model with dropout off; the Whisper decoder predicts the sentence.
+- **Part 2, CTC:** the same noisy signal is also cut in time, smoothed and masked; the CTC head predicts the phoneme sequence.
+
+The loss is `ce_coeff × cross-entropy + ctc_phone_coeff × CTC`.
+
+## The data path in detail
+
+**Recipes.** Each recipe is a subclass of `Recipe` (`data/recipes/base.py`) and is registered in `RECIPES` (`data/recipes/__init__.py`). The base class runs the same pipeline for every dataset:
+
+1. `build_chain(split)`: load the study, apply the dataset's normalisation, and mark trials as `train` or `val`.
+2. A segmenter cuts one sample per trial with four fields: the neural signal, the Whisper token ids of the sentence, the phoneme ids, and the day index.
+3. `postprocess_train` / `postprocess_val`: dataset-specific steps such as dropping trials that are too long or fixing the training order.
+
+Each recipe fills in only what is specific to its dataset: which trials, which channels, and how the day index is defined (`day_rule()`, built from `tether_scratch` session rules). `build_val_dataset` and `build_train_dataset` return the finished datasets.
+
+**Normalisation.** Card's data ships already normalised. Willet and Kunz T12 use the library's standard per-block rescaling. Kunz T15, Wairagkar and Jude need statistics that the library cannot compute directly, so `data/rescale/` computes them while the dataset is built and stores them with each recording.
+
+**Held-out trials.** Card, Willet and both Kunz datasets use the validation split shipped with the data. Wairagkar and Jude had random splits in the published runs, so the chosen trials are stored in `data/splits/*.json` and read back by `held_out_split`.
+
+**Collation.** Samples have different lengths and channel counts. Training uses `MixedRecipeCollator`, which first widens each sample to 512 channels (`utils/fill.py`: copy the channels twice, or add zero channels) and then pads in time. Validation uses `SingleRecipeCollator`, one dataset at a time; there the model widens the channels itself during evaluation. Both end in `adapter.py`, which builds the `NeuralBatch`.
+
+**`NeuralBatch` fields:**
+
+| Field | Shape | Meaning |
 |---|---|---|
-| Dataset construction | `data/datasets/card.py` | `CardDataset` (registered `"card"`) |
-| | `data/datasets/willett.py` | `WilletDataset` (registered `"willet"` — registry key keeps the old spelling) |
-| | `data/datasets/kunz.py` | `KunzDataset` base; `KunzT12Dataset`, `KunzT15Dataset` |
-| | `data/datasets/jude.py` | `JudeDataset` (registered `"jude"`) |
-| | `data/datasets/wairagkar.py` | `WairagkarDataset` (registered `"wairagkar"`) |
-| | `data/datasets/base.py` | `BaseNeuralDataset` |
-| Dataset registry | `data/registry.py` | `register_dataset`, `get_dataset` |
-| Batch sampling strategy | `data/samplers.py` | `StratifiedDayBatchSampler` |
-| Batch assembly | `data/collate.py` | `NeuralCollator` |
-| Data/model contract | `data/batch.py` | `NeuralBatch` |
-| Signal augmentation | `data/augmentations.py` | `transform_data` |
-| Session metadata | `utils/sessions.py` | `SESSIONS_BY_DATASET`; `CARD_SESSIONS`, `WILLETT_SESSIONS`, `KUNZ_T12_SESSIONS`, `KUNZ_T15_SESSIONS`, `WAIRAGKAR_SESSIONS`, `JUDE_SESSIONS` |
-| Filesystem paths | `config/paths.py` | `CARD_ROOT`, `KUNZ_ROOT`, `WILLETT_ROOT`, `RNN_ARGS`, `JUDE_PATH`, `WAIRAGKAR_ROOT`; plus lazily-required, eval-only `BRAINAUDIO_ROOT`, `LIGHTBEAM_KENLM_PATH`, `LIGHTBEAM_ADAPTER_PATH` |
-| Model (embedding) | `models/embedder.py` | `BWEmbedder` |
-| Model (positional encoding) | `models/positional_encoding.py` | `PositionalEncoding` |
-| Model (encoder) | `models/encoder.py` | `BWEncoder` — returns `BaseModelOutput`, feeds a stock `WhisperForConditionalGeneration` via `encoder_outputs=` |
-| Model (top-level assembly) | `models/model.py` | `BrainWhisperer` — embedder + encoder + Whisper+LoRA; also owns `char_head` (CTC) |
-| Training loop | `training/lightning_module.py` | `BWLightningModule` — two-phase training step (CE, then CTC on the same noise draw) |
-| Training loss | `training/losses.py` | `ctc_loss` |
-| Training callbacks | `training/callbacks.py` | `UnfreezeWhisperDecoder`, `VizCallback`, `StopAtPeriodCriteria` |
-| Training launch (SLURM/torchrun) | `training/launcher.py` | — |
-| Metrics / text | `utils/metrics.py` | `word_error_rate`, `char_error_rate`, `phoneme_error_rate` |
-| | `utils/text.py` | `build_normalizer`, `remove_punctuation` |
-| Visualization (pure, `Figure`-returning) | `viz/data_pipeline.py`, `viz/augmentations.py`, `viz/embeddings.py`, `viz/encoder.py`, `viz/training.py`, `viz/animations.py` | see one-liners in Repo layout above |
-| Entry points | `train.py`, `eval.py` | Standard training / WER-CER-PER eval |
-| | `eval_lightbeam.py` | Cascaded CTC + KenLM + Llama-3.2 LoRA (LightBeam) decoding eval, Card dataset only — bypasses the BrainWhisperer decoder entirely |
+| `signals` | (B, C, T) | neural signals, channels first |
+| `labels` | (B, L) | Whisper token ids of the sentence (padding is -100) |
+| `datasets` | (B,) | dataset name of each row; picks its embedder |
+| `day_idx` | (B,) | recording-day index of each row |
+| `lengths` | (B,) | number of valid time steps |
+| `phone_seq` | (B, S) or None | phoneme targets for CTC (0 is the blank) |
+| `phone_seq_len` | (B,) or None | number of valid phonemes |
 
----
+**Augmentation.** Noise, time cuts, smoothing and masking (`data/augmentations.py`) run inside the training step, not in the data loader, so the two parts of a step can share one noise sample. Validation only smooths.
 
-## What goes where?
+## The model
 
-- **A new dataset**: class definition goes in `data/datasets/<name>.py`, subclassing `BaseNeuralDataset`, and needs to be decorated with `@register_dataset("<name>")`.  
-Its session list is added to `utils/sessions.py` (`SESSIONS_BY_DATASET["<name>"]`) and its root env var to `config/paths.py`.  
-To use the new class, its reference `"<name>"` is added in `cfg.data.datasets` (and the total `cfg.model.n_embedders` needs to match the number of dataset names in config).
-- **A new augmentation**: the transform function needs to be added to `data/augmentations.py` and wired into `transform_data()`'s `train`/`val` branches.  
-Augmentations should be pure tensor-in/tensor-out functions, and their call should stay within `BWLightningModule.training_step`/`validation_step`, not within `DataLoader`.
-- **A new loss**: loss functions are in `training/losses.py`. They should be implemented as pure functions taking tensors and returning a scalar, following `ctc_loss`'s shape. They are caled from `BWLightningModule`.
-- **A new callback**: callbacks are added in `training/callbacks.py`, then appended to the `callbacks = [...]` list in `train.py` (`train.py:172-202`).  
-Callbacka should be gated behind a new `cfg.training.*` / `cfg.viz.*` flag rather than left always-on.
-- **A new config field**: fields should be added to their relevant dataclass in `config/schema.py` first (typed, with a default); only then referenced from `base.yaml` or an experiment override.  
-Nothing should be read from `cfg` that isn't declared in the schema.
-- **A new experiment variant**: experiments are declared with new YAML in `config/experiment/`, using `# @package _global_` at the top. Comments stating only the fields that differ from `base.yaml` and the reason why those have been changed are good practice. 
-- **A new viz plot**: visualization scripts should include pure functions producing figures (`(tensors/arrays) -> Figure`), with no logging or file I/O inside it.  
-These should be wired for training-time use only through `VizCallback` in `training/callbacks.py` for the sake of simplicity.
+`BrainWhisperer` (`models/model.py`) has three parts:
+
+1. **Embedders** (`BWEmbedder`), one per dataset, stored by name. All embedders share their convolution weights. Each adds a learned per-day correction and a day encoding, so the model can adapt to drift between sessions.
+2. **Encoder** (`BWEncoder`), built from Whisper's encoder layers. The first layers use windowed attention; the output of the last of those layers feeds the CTC phoneme head.
+3. **Whisper decoder** with LoRA adapters, which writes the sentence.
+
+`model.load_checkpoint(path)` loads the weights from a checkpoint saved by `train.py`.
+
+## Evaluation
+
+- **`eval.py`** takes a checkpoint and the run's `config.yaml`, rebuilds the model and the validation sets from the recipes, decodes with beam search (settings in `config.generation`) and prints WER, CER and PER for each dataset. `--set key=value` overrides config values without editing the saved file.
+- **`eval_lightbeam.py`** decodes Card from the CTC phoneme head instead of the Whisper decoder: a beam search with a word-level KenLM model, rescored by a fine-tuned Llama-3.2-1B. It needs the environment variables listed at the top of the script.
+
+Both scripts use `prediction.py` and the same text normalisation (`utils/text.py`) before scoring.
+
+## Where to make changes
+
+- **Add a dataset.** Write a `Recipe` subclass in `data/recipes/<name>.py` that implements `build_chain`, `neural_extractor` and `day_rule`, and sets `CHANNEL_FILL` if it has fewer than 512 channels. Register it in `RECIPES`. If its validation split is not shipped with the data, store the held-out trials in `data/splits/`. Then add the name to `data.datasets` and update `model.n_embedders`.
+- **Add an augmentation.** Write a function that takes and returns tensors in `data/augmentations.py`, and call it from `transform_data()` (or `apply_noise()` for noise shared by both parts of a step). Keep augmentations inside the training step, not in the data loader.
+- **Add a loss.** Write it as a function in `training/losses.py`, following `ctc_loss`, and call it from `BWLightningModule`.
+- **Add a callback.** Write it in `training/callbacks.py`, add it to the `callbacks` list in `train.py`, and turn it on with a config flag.
+- **Add a config option.** Declare it, with a type and a default, in the right dataclass in `config/schema.py`. Only then set it in `base.yaml` or an experiment file.
+- **Add an experiment.** Create `config/experiment/<name>.yaml` starting with `# @package _global_`, list only the values that change, and add a short comment on why.
+- **Add a figure.** Write a function that takes tensors or arrays and returns a matplotlib `Figure`, with no file writing or logging inside. To show it during training, call it from `VizCallback`.
+
+## Tests
+
+Run `pytest` from the repository root. `test_model_forward.py` and `test_training_step.py` read Card trials through its recipe, so they need the study data (`TETHER_DATA_ROOT`) and download `whisper-tiny.en` on first run. The other tests use synthetic data or skip what they cannot check.
+
+| Area | Tests |
+|---|---|
+| Data | `test_held_out_splits.py`, `test_rescale_transforms.py`, `test_jude_rescale.py`, `test_fill.py`, `test_mixed_collator.py`, `test_data_numerical.py` |
+| Model | `test_model_forward.py`, `test_encoder_windowed_attention.py`, `test_init_parity.py`, `test_session_calendar_mapping.py` |
+| Training | `test_losses.py`, `test_training_step.py` |
+| Evaluation | `test_prediction.py` |
+| Config | `test_config_package.py` |
