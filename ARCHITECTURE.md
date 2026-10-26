@@ -58,7 +58,7 @@ Dependencies only point one way: `config/` depends on nothing, `models/` reads `
 ## How the pieces fit
 
 ```
-tether_scratch datasets on disk
+neuralshed datasets on disk
         │
         ▼
 recipes (data/recipes/)        one per dataset: select trials, normalise, cut into samples
@@ -76,7 +76,7 @@ BrainWhisperer (models/)       embedder per dataset → encoder → Whisper deco
 text and phoneme predictions → WER / CER / PER
 ```
 
-The datasets themselves are downloaded and read by the `tether_scratch` library, which this package depends on. Everything that is specific to BrainWhisperer (which trials, which channels, how to normalise) lives in the recipes.
+The datasets themselves are downloaded and read by the `neuralshed` library, which this package depends on. Everything that is specific to BrainWhisperer (which trials, which channels, how to normalise) lives in the recipes.
 
 ## Configuration
 
@@ -97,7 +97,7 @@ Every option must be declared in `schema.py`; the code never reads a key that th
 2. **Start more processes for multi-GPU runs.** If `training.devices > 1` and the script is not already running under `torchrun`, it restarts itself with `torch.distributed.run`, one process per GPU, and the first process just waits.
 3. **Ask each recipe for model settings.** For every name in `data.datasets`, the recipe in `RECIPES` gives the number of recording days (`NUM_DAYS`), the calendar date of each day (`calendar_days()`), and how to widen its channels to 512 (`CHANNEL_FILL`). `model.n_embedders` must equal the number of datasets.
 4. **Build the validation loaders.** Each dataset gets its own loader, so validation scores are reported per dataset (`val_wer_card`, `val_wer_willet`, …). The six datasets are built in parallel.
-5. **Build the training loader.** The six training sets are joined into one dataset (`build_train_collection`). A sampler from `tether_scratch` (`StratifiedBatchSampler`) fills each batch with trials from a fixed number of (dataset, day) groups (`data.days_per_batch`) and splits it across GPUs. `MixedRecipeCollator` pads the trials and widens each one to 512 channels.
+5. **Build the training loader.** The six training sets are joined into one dataset (`build_train_collection`). A sampler from `neuralshed` (`StratifiedBatchSampler`) fills each batch with trials from a fixed number of (dataset, day) groups (`data.days_per_batch`) and splits it across GPUs. `MixedRecipeCollator` pads the trials and widens each one to 512 channels.
 6. **Build the model.** `BrainWhisperer` is created with one embedder per dataset and wrapped in `BWLightningModule`, which holds the training logic.
 7. **Add callbacks and loggers.** A checkpoint is saved for the best WER on the first dataset (`best-epoch=….ckpt`), and, when the CTC loss is on, another for the best PER (`best-per-epoch=….ckpt`, used by LightBeam). `UnfreezeWhisperDecoder` unfreezes the Whisper decoder at a set epoch. Training figures are added when `viz.enabled` is true. Metrics go to a CSV log, and to Weights & Biases when `wandb.enabled` is true.
 8. **Save the config and train.** The resolved config is written to `config.yaml`, then `trainer.fit` runs.
@@ -117,7 +117,7 @@ The loss is `ce_coeff × cross-entropy + ctc_phone_coeff × CTC`.
 2. A segmenter cuts one sample per trial with four fields: the neural signal, the Whisper token ids of the sentence, the phoneme ids, and the day index.
 3. `postprocess_train` / `postprocess_val`: dataset-specific steps such as dropping trials that are too long or fixing the training order.
 
-Each recipe fills in only what is specific to its dataset: which trials, which channels, and how the day index is defined (`day_rule()`, built from `tether_scratch` session rules). `build_val_dataset` and `build_train_dataset` return the finished datasets.
+Each recipe fills in only what is specific to its dataset: which trials, which channels, and how the day index is defined (`day_rule()`, built from `neuralshed` session rules). `build_val_dataset` and `build_train_dataset` return the finished datasets.
 
 **Normalisation.** Card's data ships already normalised. Willet and Kunz T12 use the library's standard per-block rescaling. Kunz T15, Wairagkar and Jude need statistics that the library cannot compute directly, so `data/rescale/` computes them while the dataset is built and stores them with each recording.
 
@@ -168,7 +168,7 @@ Both scripts use `prediction.py` and the same text normalisation (`utils/text.py
 
 ## Tests
 
-Run `pytest` from the repository root. `test_model_forward.py` and `test_training_step.py` read Card trials through its recipe, so they need the study data (`TETHER_DATA_ROOT`) and download `whisper-tiny.en` on first run. The other tests use synthetic data or skip what they cannot check.
+Run `pytest` from the repository root. `test_model_forward.py` and `test_training_step.py` read Card trials through its recipe, so they need the study data (`NEURALSHED_DATA_ROOT`) and download `whisper-tiny.en` on first run. The other tests use synthetic data or skip what they cannot check.
 
 | Area | Tests |
 |---|---|

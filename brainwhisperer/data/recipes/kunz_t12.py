@@ -3,10 +3,10 @@
 import neuralset as ns
 import torch
 import torch.nn.functional as F
-from tether_scratch import transforms
-from tether_scratch.datasets.kunz_2025 import study as kunz_study
-from tether_scratch.datasets.utils import dataset_dir
-from tether_scratch.extractors import NeuralFeatureExtractor
+from neuralshed import transforms
+from neuralshed.datasets.kunz_2025 import study as kunz_study
+from neuralshed.datasets.utils import dataset_dir
+from neuralshed.extractors import NeuralFeatureExtractor
 
 from brainwhisperer.data.recipes._kunz import KunzRecipe
 from brainwhisperer.data.recipes.base import NEURAL

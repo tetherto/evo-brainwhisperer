@@ -6,12 +6,12 @@ dataset-specific steps as hooks:
 
 - `build_chain(split)`     study + rescale + split assignment
 - `neural_extractor()`     channel layout / pairing / rates
-- `day_rule()`             the `tether_scratch` SessionRule behind the day axis
+- `day_rule()`             the `neuralshed` SessionRule behind the day axis
 - `postprocess_val/train`  length gates, halving, row-order pins
 - `calendar_days()`        per-day-index calendar metadata the embedders see
 
 `NUM_DAYS` and `DAY` extraction derive from the session rule, so
-`tether_scratch.sessions` is the single source of truth for the day axis;
+`neuralshed.sessions` is the single source of truth for the day axis;
 a dataset whose day axis is not calendar-backed (Wairagkar: day == block)
 overrides instead of faking a rule.
 """
@@ -20,13 +20,13 @@ import functools
 from abc import ABC, abstractmethod
 
 import neuralset as ns
-from tether_scratch.dataloader import RaggedSegmenter
-from tether_scratch.extractors import (
+from neuralshed.dataloader import RaggedSegmenter
+from neuralshed.extractors import (
     NeuralFeatureExtractor,
     PhonemeEncoder,
     WhisperLabelEncoder,
 )
-from tether_scratch.sessions import SessionRule
+from neuralshed.sessions import SessionRule
 
 from brainwhisperer.data.fields import DAY, NEURAL, PHONEMES, WHISPER
 

@@ -61,7 +61,7 @@ def launch_torchrun(cfg: BWConfig) -> None:
 def submit_slurm(cfg: BWConfig, *, dry_run: bool = False) -> None:
     """Build and submit an sbatch script from cfg.
 
-    The script exports TETHER_DATA_ROOT and WANDB_API_KEY from the current
+    The script exports NEURALSHED_DATA_ROOT and WANDB_API_KEY from the current
     environment, then invokes torchrun with the full Hydra task overrides.
     """
     import os
@@ -80,7 +80,7 @@ def submit_slurm(cfg: BWConfig, *, dry_run: bool = False) -> None:
     overrides = _task_overrides()
     override_str = " ".join(shlex.quote(o) for o in overrides)
 
-    required_vars = ["TETHER_DATA_ROOT", "WANDB_API_KEY"]
+    required_vars = ["NEURALSHED_DATA_ROOT", "WANDB_API_KEY"]
     env_exports = "\n".join(
         f"export {k}={shlex.quote(os.environ[k])}"
         for k in required_vars

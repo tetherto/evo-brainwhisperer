@@ -30,10 +30,10 @@ To avoid this, the config is restored from `config.yaml` via an OmegaConf merge;
 
 ---
 
-## Distributed training (`train.py` and `tether_scratch.dataloader.StratifiedBatchSampler`)
+## Distributed training (`train.py` and `neuralshed.dataloader.StratifiedBatchSampler`)
 
 5. **Batch partitioning: shared-seed modulo split**
-`StratifiedBatchSampler` (`tether_scratch/dataloader.py`, constructed in `train.py`) is given the *same* seed on every rank with `seeding="continuous"`, so all ranks advance through one identical deterministic batch sequence; each rank then yields only the batches whose global position satisfies `global_index % num_replicas == rank`. The divisibility this needs is asserted twice, in `train.py` and again inside the sampler: `batch_size` and `days_per_batch` must both be multiples of the world size.
+`StratifiedBatchSampler` (`neuralshed/dataloader.py`, constructed in `train.py`) is given the *same* seed on every rank with `seeding="continuous"`, so all ranks advance through one identical deterministic batch sequence; each rank then yields only the batches whose global position satisfies `global_index % num_replicas == rank`. The divisibility this needs is asserted twice, in `train.py` and again inside the sampler: `batch_size` and `days_per_batch` must both be multiples of the world size.
 Seeding each rank's RNG with `seed + LOCAL_RANK` would not prevent two independent RNGs to occasionally draw the same indices from the same pool. In this scenario, DDP would average gradients computed on partially identical data, silently shrinking the effective batch size.  
 Modulo partitioning over a shared sequence is disjoint by construction (every integer belongs to exactly one residue class) and needs no inter-process communication.
 

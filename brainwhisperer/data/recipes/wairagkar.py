@@ -3,11 +3,11 @@
 import neuralset as ns
 from neuralset.events.transforms.basic import QueryEvents
 from neuralset.extractors import LabelEncoder
-from tether_scratch.datasets.utils import dataset_dir
-from tether_scratch.datasets.wairagkar_2025.control_study import (
+from neuralshed.datasets.utils import dataset_dir
+from neuralshed.datasets.wairagkar_2025.control_study import (
     Wairagkar2025ControlExperiment,
 )
-from tether_scratch.extractors import NeuralFeatureExtractor
+from neuralshed.extractors import NeuralFeatureExtractor
 
 from brainwhisperer.data.recipes.base import Recipe
 from brainwhisperer.data.rescale import WairagkarBlockRescale

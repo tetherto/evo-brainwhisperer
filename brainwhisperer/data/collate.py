@@ -1,6 +1,6 @@
 from dataclasses import replace
 
-from tether_scratch.dataloader import PadSpec, RaggedCollator
+from neuralshed.dataloader import PadSpec, RaggedCollator
 
 from brainwhisperer.data.adapter import to_mixed_neural_batch, to_neural_batch
 from brainwhisperer.data.batch import NeuralBatch

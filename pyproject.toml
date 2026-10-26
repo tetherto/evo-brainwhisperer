@@ -8,8 +8,9 @@ version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
     "neuralset==0.2.3",
-    # Not on PyPI: install from a local clone until it is pinned to a published commit.
-    "tether-scratch",
+    # Not on PyPI: install from a clone of https://github.com/tetherto/neuralshed
+    # until it is pinned to a published commit.
+    "neuralshed",
 ]
 
 [tool.setuptools.packages.find]

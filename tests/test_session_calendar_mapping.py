@@ -10,7 +10,7 @@ Two related bugs once lived in BWEmbedder:
      and merging different-month sessions together.
 
 The fix: each recipe's calendar_days() gives days-since-first-session from the
-tether_scratch session rules, and BrainWhisperer threads them through to each
+neuralshed session rules, and BrainWhisperer threads them through to each
 BWEmbedder. Tests that read a recipe skip when its dataset metadata is not
 available on this machine.
 """

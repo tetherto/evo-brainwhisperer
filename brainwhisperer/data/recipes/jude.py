@@ -2,10 +2,10 @@
 
 import neuralset as ns
 from neuralset.events.transforms.basic import QueryEvents
-from tether_scratch.datasets.jude_2026_speech.study import Jude2026IntendedSpeech
-from tether_scratch.datasets.utils import dataset_dir
-from tether_scratch.extractors import NeuralFeatureExtractor
-from tether_scratch.sessions import SessionRule, jude_session_rule
+from neuralshed.datasets.jude_2026_speech.study import Jude2026IntendedSpeech
+from neuralshed.datasets.utils import dataset_dir
+from neuralshed.extractors import NeuralFeatureExtractor
+from neuralshed.sessions import SessionRule, jude_session_rule
 
 from brainwhisperer.data.recipes.base import Recipe
 from brainwhisperer.data.rescale import JudeLastBlockRescale

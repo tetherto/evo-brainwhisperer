@@ -1,11 +1,11 @@
 """Card 2024 recipe"""
 
 import neuralset as ns
-from tether_scratch import transforms
-from tether_scratch.datasets.card_2024 import study as card_study
-from tether_scratch.datasets.utils import dataset_dir
-from tether_scratch.extractors import NeuralFeatureExtractor
-from tether_scratch.sessions import SessionRule, card_session_rule
+from neuralshed import transforms
+from neuralshed.datasets.card_2024 import study as card_study
+from neuralshed.datasets.utils import dataset_dir
+from neuralshed.extractors import NeuralFeatureExtractor
+from neuralshed.sessions import SessionRule, card_session_rule
 
 from brainwhisperer.data.recipes.base import Recipe
 

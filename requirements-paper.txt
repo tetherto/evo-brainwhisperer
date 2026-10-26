@@ -5,9 +5,10 @@
 #
 # Not listed, because they were local editable installs:
 #   - brainwhisperer: this repository.
-#   - tether-scratch 0.1.0: installed from a local clone of
-#     github.com/catalystneuro/tether_scratch at commit 9ae4759 PLUS uncommitted
-#     changes. TODO: pin the commit that contains those changes once it exists.
+#   - neuralshed 0.1.0: installed from a local clone of a pre-release snapshot
+#     (commit 9ae4759 PLUS uncommitted changes). Its home is
+#     github.com/tetherto/neuralshed. TODO: pin the commit there that matches
+#     those changes once it exists.
 --extra-index-url https://download.pytorch.org/whl/cu124
 accelerate==1.14.0
 adjustText==1.4.0

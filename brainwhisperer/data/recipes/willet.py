@@ -1,12 +1,12 @@
 """Willett 2023 recipe"""
 
 import neuralset as ns
-from tether_scratch import transforms
-from tether_scratch.datasets.utils import dataset_dir
-from tether_scratch.datasets.willet_2023 import study as willet_study
-from tether_scratch.datasets.willet_2023 import utils as willet_utils
-from tether_scratch.extractors import NeuralFeatureExtractor
-from tether_scratch.sessions import SessionRule, willet_session_rule
+from neuralshed import transforms
+from neuralshed.datasets.utils import dataset_dir
+from neuralshed.datasets.willet_2023 import study as willet_study
+from neuralshed.datasets.willet_2023 import utils as willet_utils
+from neuralshed.extractors import NeuralFeatureExtractor
+from neuralshed.sessions import SessionRule, willet_session_rule
 
 from brainwhisperer.data.recipes.base import Recipe
 

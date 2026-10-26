@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
-from tether_scratch.dataloader import SegmentSample
+from neuralshed.dataloader import SegmentSample
 
 from brainwhisperer.data.collate import MixedRecipeCollator
 from brainwhisperer.data.collection import MEMBER, MixedRaggedDataset

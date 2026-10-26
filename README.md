@@ -14,13 +14,13 @@ On the publicly available BrainGate Utah array datasets, BrainWhisperer achieves
 
 ## Setup
 
-**1. Install `tether_scratch`**
+**1. Install `neuralshed`**
 
-BrainWhisperer reads its datasets through the `tether_scratch` library, which is not on PyPI yet. Clone it and install it into your environment:
+BrainWhisperer reads its datasets through the [`neuralshed`](https://github.com/tetherto/neuralshed) library, which is not on PyPI yet. Clone it and install it into your environment:
 
 ```bash
-git clone <tether_scratch-repo-url>
-pip install -e ./tether_scratch
+git clone https://github.com/tetherto/neuralshed.git
+pip install -e ./neuralshed
 ```
 
 **2. Install BrainWhisperer**
@@ -35,13 +35,13 @@ pip install -e .
 
 **3. Get the data**
 
-The datasets are not included. Download the six datasets (Card, Willett, Kunz T12 and T15, Wairagkar, Jude) by following the `tether_scratch` docs, then point it at the folder that holds them:
+The datasets are not included. Download the six datasets (Card, Willett, Kunz T12 and T15, Wairagkar, Jude) by following the [`neuralshed` docs](https://github.com/tetherto/neuralshed), then point it at the folder that holds them:
 
 ```bash
-export TETHER_DATA_ROOT=/path/to/datasets
+export NEURALSHED_DATA_ROOT=/path/to/datasets
 ```
 
-Some datasets are hosted on Dryad, which needs a personal token to download (`NEURALFETCH_DRYAD_TOKEN`, see the `tether_scratch` docs).
+Some datasets are hosted on Dryad, which needs a personal token to download (`NEURALFETCH_DRYAD_TOKEN`, see the `neuralshed` docs).
 
 **4. Optional environment variables**
 
