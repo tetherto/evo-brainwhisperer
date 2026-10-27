@@ -1,6 +1,12 @@
-"""Evaluation entry point: load checkpoint → run inference → report WER / CER / PER."""
+"""Evaluation entry point: load checkpoint → run inference → report WER / CER / PER.
+
+With `--competition`, runs on the held-out benchmark sets instead (Card on
+Kaggle, Willett on EvalAI) and writes their submission files: labels are
+withheld, so the scores come from the scorers, not from here.
+"""
 
 import argparse
+import datetime
 import sys
 from pathlib import Path
 
@@ -12,7 +18,7 @@ from transformers import WhisperTokenizer
 from brainwhisperer.config.schema import BWConfig
 from brainwhisperer.data.adapter import to_neural_batch
 from brainwhisperer.data.collate import default_ragged_collator
-from brainwhisperer.data.recipes import RECIPES
+from brainwhisperer.data.recipes import COMPETITION_RECIPES, RECIPES
 from brainwhisperer.models.model import BrainWhisperer
 from brainwhisperer.prediction import predict_batch
 from brainwhisperer.utils.metrics import (
@@ -20,7 +26,7 @@ from brainwhisperer.utils.metrics import (
     phoneme_error_rate,
     word_error_rate,
 )
-from brainwhisperer.utils.text import build_normalizer
+from brainwhisperer.utils.text import build_normalizer, remove_punctuation
 
 
 def main() -> None:
@@ -53,6 +59,18 @@ def main() -> None:
         default=[],
         help="Overrides merged after the saved config, e.g. "
         "--set data.batch_size=32 (leaves the saved config.yaml untouched)",
+    )
+    parser.add_argument(
+        "--competition",
+        action="store_true",
+        help="Predict the held-out benchmark sets and write submission files "
+        "instead of scoring the val sets",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Folder for the submission files (default: evals/<YYYYMMDD>_competition)",
     )
     args = parser.parse_args()
 
@@ -105,7 +123,20 @@ def main() -> None:
     channel_fills_per_embedder = [
         RECIPES[name].CHANNEL_FILL for name in cfg.data.datasets
     ]
-    val_names = list(cfg.data.datasets)
+    if args.competition:
+        # Only the checkpoint's datasets that have a held-out benchmark set.
+        val_names = [n for n in cfg.data.datasets if n in COMPETITION_RECIPES]
+        if not val_names:
+            sys.exit(
+                f"--competition: none of {list(cfg.data.datasets)} has a "
+                f"competition set (have: {list(COMPETITION_RECIPES)})"
+            )
+        out_dir = args.out or Path(
+            "evals", f"{datetime.date.today():%Y%m%d}_competition"
+        )
+        out_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        val_names = list(cfg.data.datasets)
 
     # Every dataset comes from its recipe; batches use the default ragged
     # collator. eval.py adapts a ragged batch to a NeuralBatch in its own
@@ -113,8 +144,12 @@ def main() -> None:
     val_loaders = []
     val_adapters = []
     for name in val_names:
-        recipe = RECIPES[name]  # KeyError = no recipe for this dataset
-        val_ds = recipe.build_val_dataset(max_label_len=cfg.data.max_seq_len)
+        if args.competition:
+            recipe = COMPETITION_RECIPES[name]
+            val_ds = recipe.build_competition_dataset()
+        else:
+            recipe = RECIPES[name]  # KeyError = no recipe for this dataset
+            val_ds = recipe.build_val_dataset(max_label_len=cfg.data.max_seq_len)
         val_adapters.append(
             lambda raw, n=name, r=recipe: to_neural_batch(
                 raw,
@@ -129,7 +164,7 @@ def main() -> None:
             DataLoader(
                 val_ds,
                 batch_size=batch_size,
-                collate_fn=default_ragged_collator(),
+                collate_fn=default_ragged_collator(labels=not args.competition),
                 num_workers=cfg.data.num_workers,
                 shuffle=False,
             )
@@ -178,6 +213,22 @@ def main() -> None:
                 refs.extend(result.refs)
                 phone_hyps.extend(result.phone_hyps)
                 phone_refs.extend(result.phone_refs)
+
+        if args.competition:
+            recipe = COMPETITION_RECIPES[name]
+            if len(hyps) != recipe.N_TRIALS:
+                sys.exit(
+                    f"{name}: {len(hyps)} predictions, the scorer expects "
+                    f"{recipe.N_TRIALS}; no file written"
+                )
+            # The scorers compare against their own references, so clean the
+            # way the benchmarks do (lowercase, letters and apostrophes), not
+            # with the WER normaliser, which rewrites e.g. "twenty" to "20".
+            path = recipe.write_submission(
+                out_dir, [remove_punctuation(t) for t in hyps]
+            )
+            print(f"Dataset: {name}  (n={len(hyps)})  wrote {path}")
+            continue
 
         hyps_norm = [normalizer(t) for t in hyps]
         refs_norm = [normalizer(t) for t in refs]
