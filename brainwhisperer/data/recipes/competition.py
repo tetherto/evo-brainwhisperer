@@ -9,6 +9,9 @@ trigger on a per-trial marker and carry only the neural signal and the day
 index.
 """
 
+import csv
+from pathlib import Path
+
 import neuralset as ns
 from neuralshed import transforms
 from neuralshed.dataloader import RaggedSegmenter
@@ -35,8 +38,14 @@ class _CompetitionMixin:
     #: window, whereas back-to-back trial markers can touch a neighbour's
     #: window through float rounding and collide.
     DAY_SOURCE: str = "SpikeCounts"
+    #: Trials the scorer expects, one prediction each.
+    N_TRIALS: int
 
     def competition_chain(self) -> ns.Chain:
+        raise NotImplementedError
+
+    def write_submission(self, out_dir: Path, texts: list[str]) -> Path:
+        """Write `texts` (row i = trial i) in the scorer's format; return the file."""
         raise NotImplementedError
 
     def competition_extractor(self) -> NeuralFeatureExtractor:
@@ -69,6 +78,16 @@ class CardCompetitionRecipe(_CompetitionMixin, CardRecipe):
     """Card 2024 ``test`` split (1,450 trials)."""
 
     TRIGGER = "SpikeCounts"
+    N_TRIALS = 1450
+
+    def write_submission(self, out_dir: Path, texts: list[str]) -> Path:
+        """Kaggle CSV: header ``id,text``, ids 0..N-1."""
+        path = Path(out_dir) / "card_kaggle.csv"
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["id", "text"])
+            writer.writerows(enumerate(texts))
+        return path
 
     def competition_chain(self) -> ns.Chain:
         # The source files are already z-scored, as for training: no rescale.
@@ -86,6 +105,13 @@ class WilletCompetitionRecipe(_CompetitionMixin, WilletRecipe):
     """Willett 2023 ``competitionHoldOut`` (1,200 trials)."""
 
     TRIGGER = "Stimulus"
+    N_TRIALS = 1200
+
+    def write_submission(self, out_dir: Path, texts: list[str]) -> Path:
+        """EvalAI text file: one sentence per line."""
+        path = Path(out_dir) / "willet_evalai.txt"
+        path.write_text("".join(f"{t}\n" for t in texts), encoding="utf-8")
+        return path
 
     def competition_chain(self, partition: str = "competitionHoldOut") -> ns.Chain:
         """``partition="test"`` reads the labelled test files, for parity checks."""
