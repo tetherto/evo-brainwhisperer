@@ -37,6 +37,16 @@ def test_model_shape_matches_training(name):
     assert ours.CHANNEL_FILL == train.CHANNEL_FILL
 
 
+def test_card_submission_format(tmp_path):
+    path = COMPETITION_RECIPES["card"].write_submission(tmp_path, ["a b", "c, d"])
+    assert path.read_text().splitlines() == ["id,text", "0,a b", '1,"c, d"']
+
+
+def test_willet_submission_format(tmp_path):
+    path = COMPETITION_RECIPES["willet"].write_submission(tmp_path, ["a b", "c"])
+    assert path.read_text() == "a b\nc\n"
+
+
 def _sessions_sorted_then_file_order(meta):
     """Rows grouped by session in sorted order, file order inside each session."""
     sessions = list(meta["session"])
