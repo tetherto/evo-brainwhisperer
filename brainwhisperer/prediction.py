@@ -77,7 +77,8 @@ def predict_batch(
     # WER path: free generation with beam search.
     generated_ids = model.generate(val_batch, **gen_kwargs)
     result.hyps = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-    result.refs = reference_texts(batch.labels, tokenizer)
+    if batch.labels is not None:  # None on competition sets
+        result.refs = reference_texts(batch.labels, tokenizer)
 
     # PER path: encoder-only forward to obtain phone logits.
     if measure_per and batch.phone_seq is not None:
