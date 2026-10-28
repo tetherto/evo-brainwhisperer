@@ -11,7 +11,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.strategies import DDPStrategy
 from omegaconf import DictConfig, OmegaConf
-from tether_scratch.dataloader import StratifiedBatchSampler
+from neuralshed.dataloader import StratifiedBatchSampler
 from torch.utils.data import DataLoader
 from transformers import WhisperTokenizer
 
@@ -123,7 +123,7 @@ def main(cfg: DictConfig) -> None:
     # ------------------------------------------------------------------
     num_days_per_embedder = [RECIPES[name].NUM_DAYS for name in cfg.data.datasets]
     # Per-day calendar metadata (day-encoding positions / month buckets),
-    # derived from the tether_scratch session rules. Whether the embedder
+    # derived from the neuralshed session rules. Whether the embedder
     # uses it depends on its config (see BrainWhisperer.__init__).
     calendar_days_per_embedder = [
         RECIPES[name].calendar_days() for name in cfg.data.datasets
@@ -168,7 +168,7 @@ def main(cfg: DictConfig) -> None:
     # Training DataLoader
     # ------------------------------------------------------------------
     # The six train recipes as one collection, sampled by the
-    # tether_scratch sampler: each global batch draws `days_per_batch`
+    # neuralshed sampler: each global batch draws `days_per_batch`
     # (member, day) groups, split across the ranks. "continuous" seeding
     # keeps one RNG stream for the whole run, so a seed fixes every
     # epoch's batch order.

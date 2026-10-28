@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 from neuralset.events.utils import SpecialLoader
 
-from tether_scratch import scaling
+from neuralshed import scaling
 
 
 def _stream_error(owner: str, raw: str) -> ValueError:

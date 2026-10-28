@@ -23,9 +23,9 @@ import pandas as pd
 import pytest
 from neuralset.events import study as ns_study
 from neuralset.events.utils import SpecialLoader
-from tether_scratch import scaling
-from tether_scratch.datasets.study import TetherStudy
-from tether_scratch.events import BandPower, SpikeCounts  # noqa: F401, register types
+from neuralshed import scaling
+from neuralshed.datasets.study import NeuralshedStudy
+from neuralshed.events import BandPower, SpikeCounts  # noqa: F401, register types
 
 from brainwhisperer.data.rescale import KunzPairedBlockRescale
 from brainwhisperer.data.rescale import WairagkarBlockRescale
@@ -57,7 +57,7 @@ def _kunz_pair_array(x: np.ndarray, spike: bool, clip: float = np.inf) -> np.nda
     return np.concatenate(cols, axis=1)
 
 
-class KunzFixtureStudy(TetherStudy):
+class KunzFixtureStudy(NeuralshedStudy):
     """One block timeline: two cued trials, two 100 Hz streams, pair_start stamps."""
 
     dataset_id: tp.ClassVar[str] = "kunz_2025"
@@ -192,7 +192,7 @@ def _served(block: int, trial: int, which: str) -> np.ndarray:
     return x
 
 
-class WairagkarFixtureStudy(TetherStudy):
+class WairagkarFixtureStudy(NeuralshedStudy):
     """Two block files of pooled trials; one constant channel per stream."""
 
     dataset_id: tp.ClassVar[str] = "wairagkar_2025"

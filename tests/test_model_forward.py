@@ -5,7 +5,7 @@ Run: pytest tests/test_model_forward.py -v
 
 Synthetic tests cover shape/dtype contracts without requiring data on disk.
 TestBrainWhispererRealData builds its batch from the Card recipe, so it
-requires the study data mount (tether `dataset_dir("card_2024")`).
+requires the study data mount (neuralshed `dataset_dir("card_2024")`).
 TestBrainWhisperer downloads openai/whisper-tiny.en (~150 MB) on first run.
 """
 

@@ -16,7 +16,7 @@ The bake differs between the two streams. A rescaled stored bin is
 To land on ``(S - mu) / (sd + eps)`` for pair sum ``S``, the transform bakes
 ``B = mu / 2``. The extractor then multiplies each summed spike pair by the
 native-rate factor 2 *after* pairing
-(``tether_scratch/extractors.py::_get_paired_timed_array``), so the spike
+(``neuralshed/extractors.py::_get_paired_timed_array``), so the spike
 divisor absorbs it too: ``D = 2 * (sd + eps)``, giving
 ``2 * (S - 2B) / D = (S - mu) / (sd + eps)``. An averaged power pair is
 ``(M - B) / D`` at factor 1, so the BandPower stream bakes ``B = mu``,
@@ -30,7 +30,7 @@ import typing as tp
 import neuralset as ns
 import numpy as np
 import pandas as pd
-from tether_scratch import scaling
+from neuralshed import scaling
 
 from brainwhisperer.data.rescale.bake import bake_loader, load_stream, sole_stream_row
 

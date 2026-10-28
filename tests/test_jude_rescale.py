@@ -17,9 +17,9 @@ import pandas as pd
 import pytest
 from neuralset.events import study as ns_study
 from neuralset.events.utils import SpecialLoader
-from tether_scratch import scaling
-from tether_scratch.datasets.study import TetherStudy
-from tether_scratch.events import BandPower, SpikeCounts  # noqa: F401, register types
+from neuralshed import scaling
+from neuralshed.datasets.study import NeuralshedStudy
+from neuralshed.events import BandPower, SpikeCounts  # noqa: F401, register types
 
 from brainwhisperer.data.rescale import JudeLastBlockRescale
 
@@ -69,7 +69,7 @@ def _pair_array(x: np.ndarray, which: str, clip: float = CLIP) -> np.ndarray:
     return np.concatenate(cols, axis=1)
 
 
-class JudeFixtureStudy(TetherStudy):
+class JudeFixtureStudy(NeuralshedStudy):
     """s1 blocks 1-2 (published) + block 3 (out of scope), 100 Hz bins."""
 
     dataset_id: tp.ClassVar[str] = "jude_2026_typing"

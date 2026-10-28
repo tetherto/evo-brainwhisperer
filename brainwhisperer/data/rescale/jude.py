@@ -22,7 +22,7 @@ extracts at ``target_unit="native"`` with ``pair_trigger_field="start"``, so a
 summed spike pair subtracts the stored shift **twice**: the transform bakes
 the paired spike mean divided by 2. The spike divisor doubles too, because
 the extractor multiplies each summed spike pair by the native-rate factor 2
-*after* pairing (``tether_scratch/extractors.py::_get_paired_timed_array``).
+*after* pairing (``neuralshed/extractors.py::_get_paired_timed_array``).
 The read pair then equals ``(S - mean) / (std + eps)``. Averaged power bakes
 mean and divisor unchanged. The released values are already capped at
 50,000; the cap here spells out the original formula.
@@ -33,7 +33,7 @@ import typing as tp
 import neuralset as ns
 import numpy as np
 import pandas as pd
-from tether_scratch import scaling
+from neuralshed import scaling
 
 from brainwhisperer.data.rescale.bake import bake_loader, load_stream, sole_stream_row
 from brainwhisperer.data.splits import published_scope

@@ -30,11 +30,11 @@ from brainwhisperer.config.paths import (
     LIGHTBEAM_ADAPTER_PATH,
     LIGHTBEAM_KENLM_PATH,
 )
+from brainwhisperer.config.schema import BWConfig
 from brainwhisperer.data.collate import (
     SingleRecipeCollator,
     default_ragged_collator,
 )
-from brainwhisperer.config.schema import BWConfig
 from brainwhisperer.data.recipes import RECIPES
 from brainwhisperer.models.model import BrainWhisperer
 from brainwhisperer.prediction import reference_texts

@@ -9,7 +9,7 @@ The day axis is keyed by DATE, not session: several sentenceData files
 share one recording date, so the day count is `num_date_ranks`.
 """
 
-from tether_scratch.sessions import SessionRule, kunz_session_rule
+from neuralshed.sessions import SessionRule, kunz_session_rule
 
 from brainwhisperer.data.recipes.base import NEURAL, Recipe
 
