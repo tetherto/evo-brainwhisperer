@@ -9,6 +9,9 @@
 #     (commit 9ae4759 PLUS uncommitted changes). Its home is
 #     github.com/tetherto/neuralshed. TODO: pin the commit there that matches
 #     those changes once it exists.
+#
+# Current neuralshed needs neuralset 0.4.0 (see pyproject.toml); with it, the
+# seed 8 scores match these runs to within 0.01 WER points.
 --extra-index-url https://download.pytorch.org/whl/cu124
 accelerate==1.14.0
 adjustText==1.4.0
