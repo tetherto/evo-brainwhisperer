@@ -9,18 +9,19 @@ from brainwhisperer.data.fields import DAY, NEURAL, PHONEMES, WHISPER
 from brainwhisperer.utils.fill import fill_to_num_features
 
 
-def default_ragged_collator() -> RaggedCollator:
-    """The batch padding contract."""
-    return RaggedCollator(
-        fields={
-            NEURAL: PadSpec(axis=-1, pad_value=0),
-            # -100 = PyTorch CE ignore index, so padded label positions add no loss.
-            WHISPER: PadSpec(axis=-1, pad_value=-100),
-            PHONEMES: PadSpec(axis=-1, pad_value=0),
-            # DAY is left unconfigured: every sample carries the same
-            # (single-value) shape, so the collator just stacks it.
-        }
-    )
+def default_ragged_collator(labels: bool = True) -> RaggedCollator:
+    """The batch padding contract.
+
+    `labels=False` drops the label fields, for unlabelled (competition) sets.
+    """
+    fields = {NEURAL: PadSpec(axis=-1, pad_value=0)}
+    if labels:
+        # -100 = PyTorch CE ignore index, so padded label positions add no loss.
+        fields[WHISPER] = PadSpec(axis=-1, pad_value=-100)
+        fields[PHONEMES] = PadSpec(axis=-1, pad_value=0)
+    # DAY is left unconfigured: every sample carries the same
+    # (single-value) shape, so the collator just stacks it.
+    return RaggedCollator(fields=fields)
 
 
 class MixedRecipeCollator:
