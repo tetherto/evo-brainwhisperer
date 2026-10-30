@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "brainwhisperer"
 version = "0.1.0"
-requires-python = ">=3.10"
+requires-python = ">=3.12"  # neuralshed needs 3.12
 dependencies = [
-    "neuralset==0.2.3",
-    # Not on PyPI: install from a clone of https://github.com/tetherto/neuralshed
-    # until it is pinned to a published commit.
-    "neuralshed",
+    "neuralset==0.4.0",
+    # Not on PyPI: install the v0.1.0 tag of https://github.com/tetherto/neuralshed
+    # (see README).
+    "neuralshed==0.1.0",
     "torch>=2.6",
     "torchaudio>=2.6",
     # Exact pin: newer versions change the grouped beam search the
