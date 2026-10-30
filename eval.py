@@ -29,6 +29,15 @@ from brainwhisperer.utils.metrics import (
 from brainwhisperer.utils.text import build_normalizer, remove_punctuation
 
 
+def default_device() -> str:
+    """The first available of CUDA, Apple's GPU (MPS) and CPU."""
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="BrainWhisperer evaluation")
     parser.add_argument(
@@ -42,8 +51,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--device",
-        default="cuda" if torch.cuda.is_available() else "cpu",
-        help="Device string, e.g. 'cuda', 'cuda:1', or 'cpu'",
+        default=default_device(),
+        help="Device string, e.g. 'cuda', 'cuda:1', 'mps' or 'cpu' "
+        "(default: the first available of cuda, mps, cpu)",
     )
     parser.add_argument(
         "--batch-size",
@@ -83,6 +93,8 @@ def main() -> None:
         cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(args.overrides))
     # The resolved config goes to stderr so stdout holds only the scores.
     print(OmegaConf.to_yaml(cfg), file=sys.stderr)
+    print(f"checkpoint: {args.checkpoint.resolve()}", file=sys.stderr)
+    print(f"device: {args.device}", file=sys.stderr)
     batch_size = args.batch_size or cfg.data.batch_size
     device = torch.device(args.device)
 
