@@ -31,6 +31,14 @@ cd evo-brainwhisperer
 pip install -e .
 ```
 
+This is enough to run `eval.py`. Add extras for more:
+
+```bash
+pip install -e ".[train]"   # train.py and the launcher
+pip install -e ".[viz]"     # the plotting and animation code in brainwhisperer/viz
+pip install -e ".[dev]"     # pytest
+```
+
 `requirements-paper.txt` lists the exact package versions used for the paper's runs.
 
 **3. Get the data**
