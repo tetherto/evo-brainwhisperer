@@ -96,6 +96,18 @@ python eval.py --checkpoint <run_dir>/checkpoints/best-epoch=XXXX.ckpt --config 
 
 This prints WER, CER and PER for every dataset in the run. Add `--set key=value` to change config values for the evaluation only, for example `--set data.batch_size=32`.
 
+To share a model, convert its checkpoint into a folder holding only the weights and the settings needed to run it. Run this where the training data is:
+
+```bash
+python convert_checkpoint.py --checkpoint <run_dir>/checkpoints/best-epoch=XXXX.ckpt --config <run_dir>/config.yaml --out <folder>
+```
+
+Then evaluate from the folder (or, once published, from its Hugging Face name). Only the datasets you score need to be downloaded:
+
+```bash
+python eval.py --model <folder> --datasets card
+```
+
 It runs on the first available of CUDA, Apple's GPU (MPS) and CPU; choose one with `--device`. On a Mac, if PyTorch reports an operation that MPS does not support, set `PYTORCH_ENABLE_MPS_FALLBACK=1` to run it on the CPU.
 
 `eval_lightbeam.py` takes the same two arguments and decodes Card from the CTC phoneme head with an n-gram and a large language model. Use the `best-per-epoch=XXXX.ckpt` checkpoint for it.
