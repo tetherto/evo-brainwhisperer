@@ -1,5 +1,6 @@
 """Convert a train.py checkpoint into a folder that can be loaded from pretrained.
-Writes model.safetensors, config.json and a default README.md,
+Writes model.safetensors, config.json and a README.md model card (kept if
+the folder already has one, so a card being filled in is not overwritten).
 
 Usage:
     python convert_checkpoint.py \\
@@ -15,7 +16,11 @@ import torch
 from omegaconf import OmegaConf
 
 from brainwhisperer.config.schema import BWConfig
-from brainwhisperer.models.build import inference_settings, model_kwargs
+from brainwhisperer.models.build import (
+    inference_settings,
+    model_card_kwargs,
+    model_kwargs,
+)
 from brainwhisperer.models.model import WHISPER_ENCODER_PREFIX, BrainWhisperer
 
 
@@ -35,7 +40,8 @@ def main() -> None:
         **model_kwargs(cfg), inference=inference_settings(cfg), pretrained_whisper=False
     )
     model.load_checkpoint(args.checkpoint)
-    model.save_pretrained(args.out)
+    card_kept = (args.out / "README.md").exists()
+    model.save_pretrained(args.out, model_card_kwargs=model_card_kwargs(model))
 
     # Load the folder back: every saved weight must equal the checkpoint's.
     loaded = BrainWhisperer.from_pretrained(args.out).state_dict()
@@ -52,6 +58,8 @@ def main() -> None:
     print(f"checkpoint: {args.checkpoint.resolve()}")
     print(f"wrote {args.out.resolve()} ({size_mb:.0f} MB of weights)")
     print("reloaded it: every weight matches the checkpoint")
+    if card_kept:
+        print("kept the existing README.md; delete it to write a new model card")
 
 
 if __name__ == "__main__":

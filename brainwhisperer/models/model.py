@@ -30,7 +30,15 @@ HUB_FORMAT_VERSION = 1
 WHISPER_ENCODER_PREFIX = "whisper.model.encoder."
 
 
-class BrainWhisperer(nn.Module, PyTorchModelHubMixin, library_name="brainwhisperer"):
+class BrainWhisperer(
+    nn.Module,
+    PyTorchModelHubMixin,
+    library_name="brainwhisperer",
+    tags=["brain-computer-interface", "speech-decoding", "neuroscience"],
+    # Filled by generate_model_card below and by
+    # brainwhisperer.models.build.model_card_kwargs.
+    model_card_template=(Path(__file__).parent / "model_card.md").read_text(),
+):
     """
     Top-level model, receives neural signals and outputs transcribed text.
     BrainWhisperer (BW) follows a modular design, composed of:
@@ -338,6 +346,27 @@ class BrainWhisperer(nn.Module, PyTorchModelHubMixin, library_name="brainwhisper
             Path(save_directory) / SAFETENSORS_SINGLE_FILE,
             metadata={"format": "pt"},
         )
+
+    def generate_model_card(self, *args, **kwargs):
+        """Fill model_card.md with what the model knows itself; kwargs (see
+        brainwhisperer.models.build.model_card_kwargs) add the datasets'
+        study metadata."""
+        facts = {
+            "datasets": [
+                {"name": name, "num_days": emb.num_days}
+                for name, emb in self.embedders.items()
+            ],
+            "whisper_name": self.whisper_name,
+            # Saved parameters only: shared weights count once, and Whisper's
+            # unused encoder is left out, as in model.safetensors.
+            "n_params": sum(
+                p.numel()
+                for name, p in self.named_parameters()
+                if not name.startswith(WHISPER_ENCODER_PREFIX)
+            ),
+            "inference": self.inference,
+        }
+        return super().generate_model_card(*args, **{**facts, **kwargs})
 
     @classmethod
     def _from_pretrained(cls, *, strict: bool = True, **kwargs):

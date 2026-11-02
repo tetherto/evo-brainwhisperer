@@ -34,9 +34,10 @@ dev = ["pytest>=8.0"]
 where = ["."]
 include = ["brainwhisperer*"]
 
-# Ship the Whisper spelling map with the package.
+# Ship the Whisper spelling map and the model card template with the package.
 [tool.setuptools.package-data]
 "brainwhisperer.utils" = ["english.json"]
+"brainwhisperer.models" = ["model_card.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

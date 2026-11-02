@@ -35,6 +35,7 @@ from brainwhisperer.data.collate import (
 from brainwhisperer.data.recipes import RECIPES
 from brainwhisperer.models.embedder import BWEmbedder
 from brainwhisperer.models.encoder import BWEncoder
+from brainwhisperer.models.build import model_card_kwargs
 from brainwhisperer.models.model import HUB_FORMAT_VERSION, BrainWhisperer
 from brainwhisperer.models.positional_encoding import PositionalEncoding
 from brainwhisperer.utils.fill import FILL_NONE
@@ -274,9 +275,12 @@ class TestBrainWhisperer:
 # ---------------------------------------------------------------------------
 
 
+# Shaped like brainwhisperer.models.build.inference_settings.
 _HUB_INFERENCE = {
-    "generation": {"num_beams": 4},
-    "smoothing": {"kernel_size": 100, "sigma": 2.0},
+    "generation": {"num_beams": 4, "num_beam_groups": 2},
+    "smoothing": {"smooth_kernel_size": 100, "smooth_sigma": 2.0},
+    "max_label_len": 448,
+    "measure_per": True,
 }
 
 
@@ -385,6 +389,18 @@ class TestHubRoundTrip:
         )
         with pytest.raises(ValueError, match="config format 99"):
             BrainWhisperer.from_pretrained(tmp_path)
+
+    def test_model_card(self, tmp_path):
+        """The card fills in from the model and its study metadata; only the
+        marked placeholders are left."""
+        m = BrainWhisperer(_model_cfg(), ["card"], [N_DAYS], inference=_HUB_INFERENCE)
+        m.save_pretrained(tmp_path, model_card_kwargs=model_card_kwargs(m))
+        card = (tmp_path / "README.md").read_text()
+        assert "library_name: brainwhisperer" in card
+        assert f"| card | {N_DAYS} | [https://doi.org/" in card
+        assert "beam search with 4 beams in 2 groups" in card
+        assert "@article{card2024speech" in card
+        assert "{{" not in card and "{%" not in card
 
 
 # ---------------------------------------------------------------------------

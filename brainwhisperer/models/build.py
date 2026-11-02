@@ -6,6 +6,7 @@ Utils function turning the model's config into constructor arguments and inferen
 from omegaconf import DictConfig, OmegaConf
 
 from brainwhisperer.data.recipes import RECIPES
+from brainwhisperer.models.model import BrainWhisperer
 
 
 def model_kwargs(cfg: DictConfig) -> dict:
@@ -47,4 +48,30 @@ def inference_settings(cfg: DictConfig) -> dict:
         "max_label_len": cfg.data.max_seq_len,
         # Whether the model has a trained phoneme head to report PER from.
         "measure_per": cfg.training.ctc_phone_coeff > 0.0,
+    }
+
+
+def model_card_kwargs(model: BrainWhisperer) -> dict:
+    """The study metadata (from neuralshed) model_card.md lists for each of
+    the model's datasets: source, licence and citation.
+
+    Pass to `model.save_pretrained(folder, model_card_kwargs=...)`.
+    """
+    studies = {
+        name: RECIPES[name].build_chain("val").steps["study"]
+        for name in model.embedders
+    }
+    return {
+        "datasets": [
+            {
+                "name": name,
+                "num_days": embedder.num_days,
+                "url": studies[name].url,
+                "licence": studies[name].licence,
+            }
+            for name, embedder in model.embedders.items()
+        ],
+        "dataset_licences": sorted({s.licence for s in studies.values()}),
+        # Kunz T12 and T15 come from one study: cite it once.
+        "dataset_bibtex": list(dict.fromkeys(s.bibtex for s in studies.values())),
     }
