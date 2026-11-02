@@ -23,6 +23,7 @@ from brainwhisperer.data.collate import (
 )
 from brainwhisperer.data.collection import build_train_collection
 from brainwhisperer.data.recipes import RECIPES, build_in_parallel
+from brainwhisperer.models.build import model_kwargs
 from brainwhisperer.models.model import BrainWhisperer
 from brainwhisperer.training.callbacks import UnfreezeWhisperDecoder, VizCallback
 from brainwhisperer.training.lightning_module import BWLightningModule
@@ -115,31 +116,10 @@ def main(cfg: DictConfig) -> None:
     # ------------------------------------------------------------------
     # Datasets
     #
-    # Each recipe carries the model-shape metadata (NUM_DAYS, CHANNEL_FILL)
-    # and tags its samples with its registered name. The model keys its
-    # embedders by that name (BrainWhisperer.embedders[name]), so the
-    # position in the config list never decides which embedder handles a
-    # dataset.
+    # Model constructor arguments; the model-shape metadata comes from the
+    # recipes (see brainwhisperer.models.build).
     # ------------------------------------------------------------------
-    num_days_per_embedder = [RECIPES[name].NUM_DAYS for name in cfg.data.datasets]
-    # Per-day calendar metadata (day-encoding positions / month buckets),
-    # derived from the neuralshed session rules. Whether the embedder
-    # uses it depends on its config (see BrainWhisperer.__init__).
-    calendar_days_per_embedder = [
-        RECIPES[name].calendar_days() for name in cfg.data.datasets
-    ]
-    # Per-dataset override of model.embedder
-    embedder_cfg_per_embedder = [
-        OmegaConf.merge(cfg.model.embedder, cfg.data.embedder_overrides.get(name, {}))
-        for name in cfg.data.datasets
-    ]
-    # Fill-to-512 rule per dataset: applied at
-    # collation time for the mixed training batches (before the training-step
-    # augmentations mix channels) and in the model's eval-mode forwards for
-    # the validation batches.
-    channel_fills_per_embedder = [
-        RECIPES[name].CHANNEL_FILL for name in cfg.data.datasets
-    ]
+    model_args = model_kwargs(cfg)
     val_names = list(cfg.data.datasets)
 
     # Prepared independently per dataset, so the six builds overlap instead
@@ -190,7 +170,7 @@ def main(cfg: DictConfig) -> None:
         train_collection,
         batch_sampler=train_sampler,
         collate_fn=MixedRecipeCollator(
-            channel_fills=dict(zip(cfg.data.datasets, channel_fills_per_embedder)),
+            channel_fills=dict(zip(cfg.data.datasets, model_args["channel_fills"])),
         ),
         num_workers=cfg.data.num_workers,
     )
@@ -198,14 +178,7 @@ def main(cfg: DictConfig) -> None:
     # ------------------------------------------------------------------
     # Model + Lightning wrapper
     # ------------------------------------------------------------------
-    model = BrainWhisperer(
-        cfg.model,
-        list(cfg.data.datasets),
-        num_days_per_embedder,
-        calendar_days_per_embedder,
-        embedder_cfg_per_embedder,
-        channel_fills=channel_fills_per_embedder,
-    )
+    model = BrainWhisperer(**model_args)
     lm = BWLightningModule(model, cfg.training, tokenizer, val_names)
 
     # ------------------------------------------------------------------
