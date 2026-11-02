@@ -2,9 +2,14 @@ from pathlib import Path
 
 import torch
 import torch.distributed.tensor
+from huggingface_hub import PyTorchModelHubMixin
+from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
+from omegaconf import OmegaConf
 from peft import LoraConfig, get_peft_model
+from safetensors.torch import load_model, save_file
 from torch import Tensor, nn
 from transformers import (
+    GenerationConfig,
     WhisperConfig,
     WhisperForConditionalGeneration,
     WhisperTokenizer,
@@ -18,8 +23,14 @@ from brainwhisperer.utils.fill import FILL_NONE, fill_to_num_features
 
 _N_PHONE_CLASSES = 41  # CMU phoneme set used in CARD/Willet
 
+# Layout version of the config.json written by save_pretrained.
+HUB_FORMAT_VERSION = 1
+# Whisper's own encoder is never run (BWEncoder replaces it), so
+# save_pretrained leaves its weights out.
+WHISPER_ENCODER_PREFIX = "whisper.model.encoder."
 
-class BrainWhisperer(nn.Module):
+
+class BrainWhisperer(nn.Module, PyTorchModelHubMixin, library_name="brainwhisperer"):
     """
     Top-level model, receives neural signals and outputs transcribed text.
     BrainWhisperer (BW) follows a modular design, composed of:
@@ -33,18 +44,41 @@ class BrainWhisperer(nn.Module):
         ce_loss:      scalar, cross-entropy from Whisper decoder
         phone_logits: (B, T_ctc, 41)
     generate() returns token ids (B, L).
+
+    save_pretrained(folder) / BrainWhisperer.from_pretrained(folder or Hub name)
+    store the weights plus a config.json holding every constructor argument.
+    `inference` carries the settings that reproduce the reported scores and
+    is available after loading as `model.inference`.
     """
 
     def __init__(
         self,
-        cfg: BWModelConfig,
+        cfg: BWModelConfig | dict,
         embedder_names: list[str],
         num_days_per_embedder: list[int],
         calendar_days_per_embedder: list[list[int]] | None = None,
-        embedder_cfg_per_embedder: list[BWEmbedderConfig] | None = None,
+        embedder_cfg_per_embedder: list[BWEmbedderConfig | dict] | None = None,
         channel_fills: list[str] | None = None,
+        inference: dict | None = None,
+        format_version: int = HUB_FORMAT_VERSION,
+        pretrained_whisper: bool = True,
     ):
         super().__init__()
+
+        if format_version != HUB_FORMAT_VERSION:
+            raise ValueError(
+                f"Saved model has config format {format_version}; this code "
+                f"reads format {HUB_FORMAT_VERSION}"
+            )
+        # Configs arrive as dataclasses or DictConfigs from train/eval, and as
+        # plain dicts from config.json. Merging onto the schema checks keys and
+        # types the same way for all three.
+        cfg = OmegaConf.merge(OmegaConf.structured(BWModelConfig), cfg)
+        if embedder_cfg_per_embedder is not None:
+            embedder_cfg_per_embedder = [
+                OmegaConf.merge(OmegaConf.structured(BWEmbedderConfig), c)
+                for c in embedder_cfg_per_embedder
+            ]
 
         assert len(embedder_names) == len(num_days_per_embedder) == cfg.n_embedders, (
             f"embedder_names ({len(embedder_names)}) and "
@@ -117,9 +151,15 @@ class BrainWhisperer(nn.Module):
             whisper_cfg.dropout = cfg.whisper_dropout
             whisper_cfg.activation_dropout = cfg.whisper_dropout
             whisper_cfg.attention_dropout = cfg.whisper_dropout
-        whisper = WhisperForConditionalGeneration.from_pretrained(
-            cfg.whisper_name, config=whisper_cfg
-        )
+        if pretrained_whisper:
+            whisper = WhisperForConditionalGeneration.from_pretrained(
+                cfg.whisper_name, config=whisper_cfg
+            )
+        else:
+            whisper = WhisperForConditionalGeneration(whisper_cfg)
+            whisper.generation_config = GenerationConfig.from_pretrained(
+                cfg.whisper_name
+            )
         # HF models load in eval() mode by default, explicitly calling `train()`
         # activates dropout in decoder during training.
         whisper.train()
@@ -153,6 +193,28 @@ class BrainWhisperer(nn.Module):
 
         self._d_model = d_model
         self.max_source_pos = cfg.encoder.max_source_pos
+
+        self.inference = inference
+        # The tokenizer that decodes generate()'s token ids.
+        self.whisper_name = cfg.whisper_name
+        # What save_pretrained writes to config.json,
+        # keyed by constructor argument
+        self._hub_mixin_config = {
+            "format_version": format_version,
+            "cfg": OmegaConf.to_container(cfg, resolve=True),
+            "embedder_names": list(embedder_names),
+            "num_days_per_embedder": [int(n) for n in num_days_per_embedder],
+            "calendar_days_per_embedder": [
+                None if days is None else [int(d) for d in days]
+                for days in cal_days_list
+            ],
+            "embedder_cfg_per_embedder": [
+                OmegaConf.to_container(c, resolve=True) for c in embedder_cfgs
+            ],
+            "channel_fills": list(fills),
+            "inference": inference,
+            "pretrained_whisper": False,
+        }
 
     def forward(self, batch: NeuralBatch, encoder_only: bool = False) -> dict:
         """
@@ -254,3 +316,44 @@ class BrainWhisperer(nn.Module):
             if k.startswith("model.")
         }
         self.load_state_dict(state_dict)
+
+    # ------------------------------------------------------------------
+    # save_pretrained / from_pretrained (PyTorchModelHubMixin hooks)
+    # ------------------------------------------------------------------
+
+    def _save_pretrained(self, save_directory: Path) -> None:
+        """Write the weights, without Whisper's encoder, as safetensors."""
+        state_dict = {}
+        stored = set()
+        for name, tensor in self.state_dict().items():
+            # Shared conv weights and Whisper's tied output layer are stored
+            # once; loading links the other names back to the same tensor.
+            if name.startswith(WHISPER_ENCODER_PREFIX) or tensor.data_ptr() in stored:
+                continue
+            if tensor.numel():
+                stored.add(tensor.data_ptr())
+            state_dict[name] = tensor.contiguous()
+        save_file(
+            state_dict,
+            Path(save_directory) / SAFETENSORS_SINGLE_FILE,
+            metadata={"format": "pt"},
+        )
+
+    @classmethod
+    def _from_pretrained(cls, *, strict: bool = True, **kwargs):
+        # The mixin loads non-strictly by default; a missing weight must fail.
+        return super()._from_pretrained(strict=strict, **kwargs)
+
+    @classmethod
+    def _load_as_safetensor(cls, model, model_file, map_location, strict):
+        missing, unexpected = load_model(
+            model, model_file, strict=False, device=map_location
+        )
+        missing = [k for k in missing if not k.startswith(WHISPER_ENCODER_PREFIX)]
+        if strict and (missing or unexpected):
+            raise RuntimeError(
+                f"{model_file} does not match the model: "
+                f"missing {sorted(missing)}, unexpected {sorted(unexpected)}"
+            )
+        # Ready for inference, like a transformers model after from_pretrained.
+        return model.eval()
