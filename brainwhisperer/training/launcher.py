@@ -61,8 +61,10 @@ def launch_torchrun(cfg: BWConfig) -> None:
 def submit_slurm(cfg: BWConfig, *, dry_run: bool = False) -> None:
     """Build and submit an sbatch script from cfg.
 
-    The script exports NEURALSHED_DATA_ROOT and WANDB_API_KEY from the current
-    environment, then invokes torchrun with the full Hydra task overrides.
+    The job inherits the current environment (sbatch's default), so
+    NEURALSHED_DATA_ROOT, and WANDB_API_KEY when wandb.enabled, must be set
+    here; they are not written into the script. The script invokes torchrun
+    with the full Hydra task overrides.
     """
     import os
     import shutil
@@ -80,12 +82,13 @@ def submit_slurm(cfg: BWConfig, *, dry_run: bool = False) -> None:
     overrides = _task_overrides()
     override_str = " ".join(shlex.quote(o) for o in overrides)
 
-    required_vars = ["NEURALSHED_DATA_ROOT", "WANDB_API_KEY"]
-    env_exports = "\n".join(
-        f"export {k}={shlex.quote(os.environ[k])}"
-        for k in required_vars
-        if k in os.environ
-    )
+    required = ["NEURALSHED_DATA_ROOT"] + (["WANDB_API_KEY"] if cfg.wandb.enabled else [])
+    missing = [k for k in required if k not in os.environ]
+    if missing and not dry_run:
+        raise RuntimeError(
+            f"Not set: {', '.join(missing)}. The job inherits its environment "
+            "from this shell."
+        )
 
     train_script = REPO_ROOT / "train.py"
     script = f"""\
@@ -97,8 +100,6 @@ def submit_slurm(cfg: BWConfig, *, dry_run: bool = False) -> None:
 #SBATCH --cpus-per-task={4 * n}
 #SBATCH --time=24:00:00
 #SBATCH --output=slurm-%j.out
-
-{env_exports}
 
 torchrun --nproc_per_node={n} \\
     {train_script} {override_str}
