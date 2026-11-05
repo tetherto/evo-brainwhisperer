@@ -14,7 +14,8 @@ This page explains how BrainWhisperer is organised: what each part of the code d
 ```
 evo-brainwhisperer/
 ├── train.py               # Train a model
-├── eval.py                # Score a checkpoint: WER, CER and PER per dataset
+├── eval.py                # Score a model: WER, CER and PER per dataset
+├── convert_checkpoint.py  # Checkpoint -> folder that BrainWhisperer.from_pretrained loads
 ├── eval_lightbeam.py      # Score a checkpoint with CTC beam search + language models (Card only)
 ├── tests/                 # Unit and regression tests
 ├── notebooks/             # Exploration notebooks (not part of the package)
@@ -39,7 +40,8 @@ evo-brainwhisperer/
     │   ├── embedder.py            # BWEmbedder: neural signals -> tokens, with per-day corrections
     │   ├── encoder.py             # BWEncoder: Whisper's encoder with windowed attention
     │   ├── positional_encoding.py # Sinusoidal position table shared by embedder and encoder
-    │   └── model.py               # BrainWhisperer: embedders + encoder + Whisper decoder (LoRA)
+    │   ├── model.py               # BrainWhisperer: embedders + encoder + Whisper decoder (LoRA)
+    │   └── build.py               # A run's config -> model arguments and inference settings
     ├── training/
     │   ├── lightning_module.py    # BWLightningModule: training and validation steps
     │   ├── losses.py              # CTC loss
@@ -53,7 +55,7 @@ evo-brainwhisperer/
     └── viz/                   # Figures for notebooks and training logs
 ```
 
-Dependencies only point one way: `config/` depends on nothing, `models/` reads `config/` and `data/batch.py`, and `training/` and `viz/` may use anything else. `data/` never imports from `models/`.
+Dependencies only point one way: `config/` depends on nothing, `models/` reads `config/` and `data/batch.py` (and `models/build.py` reads the recipes), and `training/` and `viz/` may use anything else. `data/` never imports from `models/`.
 
 ## How the pieces fit
 
@@ -147,11 +149,11 @@ Each recipe fills in only what is specific to its dataset: which trials, which c
 2. **Encoder** (`BWEncoder`), built from Whisper's encoder layers. The first layers use windowed attention; the output of the last of those layers feeds the CTC phoneme head.
 3. **Whisper decoder** with LoRA adapters, which writes the sentence.
 
-`model.load_checkpoint(path)` loads the weights from a checkpoint saved by `train.py`.
+`model.load_checkpoint(path)` loads the weights from a checkpoint saved by `train.py`. `model.save_pretrained(folder)` writes the weights as safetensors plus a `config.json` holding every constructor argument (including each dataset's day counts) and the inference settings, and `BrainWhisperer.from_pretrained(folder or Hugging Face name)` rebuilds the model from them without reading any dataset. Whisper's own encoder is never run, so its weights are not saved.
 
 ## Evaluation
 
-- **`eval.py`** takes a checkpoint and the run's `config.yaml`, rebuilds the model and the validation sets from the recipes, decodes with beam search (settings in `config.generation`) and prints WER, CER and PER for each dataset. `--set key=value` overrides config values without editing the saved file.
+- **`eval.py`** takes a model folder (`--model`), or a checkpoint and the run's `config.yaml`. It builds the validation sets from the recipes, decodes with beam search (settings in `config.generation`, or the folder's inference settings) and prints WER, CER and PER for each dataset. `--datasets` scores only some of them. `--set key=value` overrides config values without editing the saved file.
 - **`eval_lightbeam.py`** decodes Card from the CTC phoneme head instead of the Whisper decoder: a beam search with a word-level KenLM model, rescored by a fine-tuned Llama-3.2-1B. It needs the environment variables listed at the top of the script.
 
 Both scripts use `prediction.py` and the same text normalisation (`utils/text.py`) before scoring.

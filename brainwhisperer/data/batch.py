@@ -7,7 +7,7 @@ from torch import Tensor
 @dataclass
 class NeuralBatch:
     signals: Tensor  # (B, C, T)  raw neural signals, channels-first
-    labels: Tensor  # (B, L)     Whisper token ids
+    labels: Tensor | None  # (B, L)  Whisper token ids; None on unlabelled sets
     datasets: list[
         str
     ]  # (B,)  registered dataset name per sample; routes each to its BWEmbedder
@@ -20,7 +20,7 @@ class NeuralBatch:
         """Return a copy with every tensor on `device`"""
         return NeuralBatch(
             signals=self.signals.to(device),
-            labels=self.labels.to(device),
+            labels=None if self.labels is None else self.labels.to(device),
             datasets=self.datasets,
             day_idx=self.day_idx.to(device),
             lengths=self.lengths.to(device),

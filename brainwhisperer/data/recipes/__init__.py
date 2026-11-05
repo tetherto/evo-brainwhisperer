@@ -29,6 +29,18 @@ RECIPES: dict[str, Recipe] = {
     "jude": JudeRecipe(),
 }
 
+# Held-out benchmark sets, keyed like RECIPES so each routes to its trained
+# embedder. Imported last: the module subclasses the recipes above.
+from brainwhisperer.data.recipes.competition import (  # noqa: E402
+    CardCompetitionRecipe,
+    WilletCompetitionRecipe,
+)
+
+COMPETITION_RECIPES: dict[str, Recipe] = {
+    "card": CardCompetitionRecipe(),
+    "willet": WilletCompetitionRecipe(),
+}
+
 
 def build_in_parallel(names, build, max_workers=None):
     """Build one dataset per recipe name, concurrently.
@@ -50,4 +62,4 @@ def build_in_parallel(names, build, max_workers=None):
         return {name: future.result() for name, future in futures.items()}
 
 
-__all__ = ["RECIPES", "Recipe", "build_in_parallel"]
+__all__ = ["COMPETITION_RECIPES", "RECIPES", "Recipe", "build_in_parallel"]
