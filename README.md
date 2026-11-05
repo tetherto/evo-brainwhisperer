@@ -26,7 +26,7 @@ pip install -e ./neuralshed
 **2. Install BrainWhisperer**
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/tetherto/evo-brainwhisperer.git
 cd evo-brainwhisperer
 pip install -e .
 ```
@@ -39,7 +39,12 @@ pip install -e ".[viz]"     # the plotting and animation code in brainwhisperer/
 pip install -e ".[dev]"     # pytest
 ```
 
-`requirements-paper.txt` lists the exact package versions used for the paper's runs. It pins CUDA builds of PyTorch, so it installs on Linux only.
+`requirements.txt` pins the tested version of each dependency, for Linux (CUDA 12.6 builds of PyTorch) and macOS. To install them instead of the latest allowed versions, run `pip install -r requirements.txt` before `pip install -e .`.
+
+Two things can break the install:
+
+- **uv.** By default, uv takes `torch` only from the PyTorch index, which has no macOS builds. Add `--index-strategy unsafe-best-match` so it also checks PyPI: `uv pip install -r requirements.txt --index-strategy unsafe-best-match`.
+- **The `viz` extra** (also in `requirements.txt`) builds `manim` from source, which needs the Cairo and Pango libraries. Install them first: `brew install cairo pango pkg-config` on macOS, or `apt install libcairo2-dev libpango1.0-dev pkg-config` on Debian/Ubuntu.
 
 **3. Get the data**
 
@@ -50,7 +55,7 @@ export NEURALFETCH_DRYAD_TOKEN=<your token>
 export NEURALSHED_DATA_ROOT=/path/to/datasets
 ```
 
-Then download them (about 120 GB unpacked; this takes hours):
+Then download them (about 120 GB unpacked; this might take hours):
 
 ```bash
 python -c "from brainwhisperer.data.recipes import RECIPES; [RECIPES[n].build_chain('val').steps['study'].download() for n in ['card', 'willet', 'kunz_t12', 'wairagkar', 'jude']]"
