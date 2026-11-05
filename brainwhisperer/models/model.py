@@ -19,6 +19,7 @@ from brainwhisperer.config.schema import BWEmbedderConfig, BWModelConfig
 from brainwhisperer.data.batch import NeuralBatch
 from brainwhisperer.models.embedder import BWEmbedder
 from brainwhisperer.models.encoder import BWEncoder
+from brainwhisperer.models.group_beam_search import group_beam_search
 from brainwhisperer.utils.fill import FILL_NONE, fill_to_num_features
 
 _N_PHONE_CLASSES = 41  # CMU phoneme set used in CARD/Willet
@@ -263,6 +264,9 @@ class BrainWhisperer(
     def generate(self, batch: NeuralBatch, **kwargs) -> Tensor:
         embedded = self._embed(batch.signals, batch.datasets, batch.day_idx)
         enc_out = self.encoder(embedded)
+        if kwargs.get("num_beam_groups", 1) > 1:
+            # transformers 5 no longer ships grouped beam search; use our copy.
+            kwargs["custom_generate"] = group_beam_search
         return self.whisper.generate(encoder_outputs=enc_out, **kwargs)
 
     # ------------------------------------------------------------------
