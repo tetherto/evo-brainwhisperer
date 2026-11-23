@@ -1,6 +1,6 @@
 # BrainWhisperer
 
-**Paper:** [BrainWhisperer: Leveraging Whisper for Speech Decoding in Neuroprosthetics](#) *(link added at publication)*
+**Paper:** [BrainWhisperer: Leveraging Large-Scale ASR Models for Neural Speech Decoding](https://arxiv.org/abs/2603.13321)
 
 ---
 
@@ -8,7 +8,7 @@
 
 BrainWhisperer decodes continuous speech from microelectrode array recordings of the motor cortex, targeting individuals with severe motor impairments who cannot speak. Three barriers make this hard in practice: labelled neural data is scarce, neural signals drift across recording sessions (non-stationarity), and the external language models used in state-of-the-art decoders are too large for local, private inference.  
 This work addresses all three by adapting Whisper (pretrained on roughly 680,000 hours of speech) directly to intracortical signals through a convolutional front-end, hierarchical low-rank session projections, windowed self-attention in phoneme-selective encoder layers, and a multi-task CTC + cross-entropy training objective. Subject-specific embedders allow cross-participant training within a single unified architecture.  
-On the publicly available BrainGate Utah array datasets, BrainWhisperer achieves **8.5% WER** on the Card benchmark in end-to-end decoding — to the best of our knowledge the best result reported in this setting — and cross-dataset training improves performance without any participant-specific fine-tuning.
+On the publicly available BrainGate Utah array datasets, BrainWhisperer reaches **8.7% WER** on the Brain-to-Text '25 benchmark (Card et al. 2024) in end-to-end decoding, with no external language model. When the paper appeared, this was to the best of our knowledge the best end-to-end result reported on this benchmark. Cross-dataset training improves performance without any participant-specific fine-tuning; the six-dataset model trained with this repository scores 8.6%.
 
 ---
 
@@ -129,7 +129,33 @@ For how the code is organised, how data flows through it and where to make chang
 
 ## Reproducing results
 
-*(Commands keyed to paper tables and figures — added at publication.)*
+These steps reproduce the six-dataset model released on Hugging Face and the numbers on its [model card](MODEL_CARD.md): validation WER on every dataset, and the Brain-to-Text '25 score on Kaggle. The paper's Table 1 reports earlier models (Card only, and Card + Willett + Kunz) and a 5-gram decoder, which these steps do not cover.
+
+**1. Train eight seeds** of the six-dataset model. The seeds run one after another, each on 2 GPUs, and each writes its own run folder under `outputs/`:
+
+```bash
+python -m brainwhisperer.training.launcher --seeds 1,2,3,4,5,6,7,8 experiment=cross_dataset_full
+```
+
+**2. Score each seed on the validation sentences.** This prints WER, CER and PER per dataset, the numbers behind the model card's "Per-dataset results" table (our logs are in `evals/20261023_seeds1-8/`):
+
+```bash
+python eval.py --checkpoint <run_dir>/checkpoints/best-epoch=XXXX.ckpt --config <run_dir>/config.yaml
+```
+
+**3. Score each seed on the benchmark test sets.** Their labels are withheld, so `--competition` writes submission files instead of scores: `card_kaggle.csv` for [Brain-to-Text '25](https://www.kaggle.com/competitions/brain-to-text-25) on Kaggle, and `willet_evalai.txt` for the Willett benchmark on EvalAI. Upload `card_kaggle.csv` as a late submission on Kaggle to get the private and public scores (our files are in `evals/20261027_competition/`):
+
+```bash
+python eval.py --checkpoint <run_dir>/checkpoints/best-epoch=XXXX.ckpt --config <run_dir>/config.yaml --competition --out evals/<date>_competition/seed<N>
+```
+
+**4. Check the released model.** We released seed 6, the seed with the lowest Card validation WER. Scoring it from Hugging Face matches step 2 for that seed to one decimal place (on Card we get 8.80% WER, against 8.77% in our log; beam search can differ slightly with batch size and library versions):
+
+```bash
+python eval.py --model qvac/BrainWhisperer
+```
+
+Results vary between seeds: on Kaggle's private leaderboard, the eight seeds score from 8.5% to 9.6% WER (mean 9.1%).
 
 ---
 
@@ -138,10 +164,19 @@ For how the code is organised, how data flows through it and where to make chang
 If you use this code, please cite:
 
 ```bibtex
-@article{brainwhisperer2025,
-  title   = {BrainWhisperer: Leveraging Whisper for Speech Decoding in Neuroprosthetics},
-  author  = {},
-  journal = {},
-  year    = {2025},
+@misc{boccato2026brainwhisperer,
+  title         = {BrainWhisperer: Leveraging Large-Scale ASR Models for Neural Speech Decoding},
+  author        = {Boccato, Tommaso and Olak, Michal and Ferrante, Matteo},
+  year          = {2026},
+  eprint        = {2603.13321},
+  archivePrefix = {arXiv},
+  primaryClass  = {eess.AS},
+  url           = {https://arxiv.org/abs/2603.13321},
 }
 ```
+
+---
+
+## License
+
+The code and model weights are released by Tether Data, S.A. de C.V. under the [Apache 2.0 license](LICENSE). The model starts from [whisper-tiny.en](https://huggingface.co/openai/whisper-tiny.en), also Apache 2.0. The datasets it is trained on are not included; their authors release them on Dryad under CC0-1.0.
