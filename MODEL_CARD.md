@@ -44,7 +44,7 @@ evaluation code is at
 - **One model, six datasets, three participants.** Each dataset has its own small input layer; the
   encoder and decoder are shared. Training across datasets improves accuracy with no
   participant-specific fine-tuning.
-- **Small enough to run locally.** 62M parameters (249 MB in float32) and no external language
+- **Small enough to run locally.** 60M parameters (249 MB in float32) and no external language
   model, where the best-performing decoders rely on n-gram and large language models at inference
   time.
 - **Open weights** under Apache 2.0, with the training and evaluation code that produced the
@@ -58,7 +58,7 @@ evaluation code is at
 | --- | --- |
 | Developed by | [Tether AI Research](https://tether.io/) * |
 | Model type | Sequence-to-sequence: neural recordings in, English text out |
-| Parameters | 62.15M † |
+| Parameters | 59.95M † |
 | Base model | [openai/whisper-tiny.en](https://huggingface.co/openai/whisper-tiny.en): tokenizer and text decoder (frozen, adapted with LoRA). The audio encoder is replaced by a new encoder trained from scratch. |
 | Input | Binned threshold crossings and spike-band power from Utah microelectrode arrays in the left precentral gyrus |
 | Output | An English sentence, plus phoneme probabilities from an auxiliary CTC head (41 classes) |
@@ -69,9 +69,11 @@ evaluation code is at
 
 &#42; References to Tether AI Research are references to Tether Data, S.A. de C.V.
 
-† Saved parameters only: Whisper's audio encoder is replaced and not shipped. The count breaks down
-into Whisper's decoder (29.87M), the BrainWhisperer encoder (10.93M), six dataset-specific input
-layers (21.32M in total) and the phoneme head (0.03M).
+† Whisper's audio encoder is replaced and not shipped. The count breaks down into Whisper's
+decoder (29.55M, kept frozen) with its LoRA adapters (0.32M), the BrainWhisperer encoder (10.65M),
+six dataset-specific input layers (19.40M in total, with the convolutional front-end counted once)
+and the phoneme head (0.03M), so 30.39M parameters are trained. `model.safetensors` also stores
+2.21M values of fixed position and recording-day encodings, which are not parameters.
 
 ### How it works
 
@@ -213,8 +215,6 @@ print(model.inference)  # beam search and smoothing settings used for the scores
 
 `brainwhisperer.prediction.predict_batch` runs the same decoding as `eval.py` on one batch from a
 dataset recipe.
-
-<!-- TODO: confirm the Hub repo name (qvac/BrainWhisperer is a placeholder). -->
 
 ---
 
