@@ -5,3 +5,4 @@ CLAUDE.md
 .pytest_cache
 .envrc
 .ipynb_checkpoints
+demo/cache/
