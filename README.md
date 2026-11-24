@@ -16,32 +16,52 @@ On the publicly available BrainGate Utah array datasets, BrainWhisperer achieves
 
 **1. Install `neuralshed`**
 
-BrainWhisperer reads its datasets through the [`neuralshed`](https://github.com/tetherto/neuralshed) library, which is not on PyPI yet. Clone it and install it into your environment:
+BrainWhisperer reads its datasets through the [`neuralshed`](https://github.com/tetherto/neuralshed) library, which is not on PyPI yet. Clone the version BrainWhisperer is tested with and install it into a Python 3.12 environment:
 
 ```bash
-git clone https://github.com/tetherto/neuralshed.git
+git clone --branch v0.1.0 https://github.com/tetherto/neuralshed.git
 pip install -e ./neuralshed
 ```
 
 **2. Install BrainWhisperer**
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/tetherto/evo-brainwhisperer.git
 cd evo-brainwhisperer
 pip install -e .
 ```
 
-`requirements-paper.txt` lists the exact package versions used for the paper's runs.
+This is enough to run `eval.py`. Add extras for more:
+
+```bash
+pip install -e ".[train]"   # train.py and the launcher
+pip install -e ".[viz]"     # the plotting and animation code in brainwhisperer/viz
+pip install -e ".[dev]"     # pytest
+```
+
+`requirements.txt` pins the tested version of each dependency, for Linux (CUDA 12.6 builds of PyTorch) and macOS. To install them instead of the latest allowed versions, run `pip install -r requirements.txt` before `pip install -e .`.
+
+Two things can break the install:
+
+- **uv.** By default, uv takes `torch` only from the PyTorch index, which has no macOS builds. Add `--index-strategy unsafe-best-match` so it also checks PyPI: `uv pip install -r requirements.txt --index-strategy unsafe-best-match`.
+- **The `viz` extra** (also in `requirements.txt`) builds `manim` from source, which needs the Cairo and Pango libraries. Install them first: `brew install cairo pango pkg-config` on macOS, or `apt install libcairo2-dev libpango1.0-dev pkg-config` on Debian/Ubuntu.
 
 **3. Get the data**
 
-The datasets are not included. Download the six datasets (Card, Willett, Kunz T12 and T15, Wairagkar, Jude) by following the [`neuralshed` docs](https://github.com/tetherto/neuralshed), then point it at the folder that holds them:
+The six datasets (Card, Willett, Kunz T12 and T15, Wairagkar, Jude) are not included. All six are hosted on Dryad, which needs a personal token to download. Set the token and the folder the datasets go in:
 
 ```bash
+export NEURALFETCH_DRYAD_TOKEN=<your token>
 export NEURALSHED_DATA_ROOT=/path/to/datasets
 ```
 
-Some datasets are hosted on Dryad, which needs a personal token to download (`NEURALFETCH_DRYAD_TOKEN`, see the `neuralshed` docs).
+Then download them (about 120 GB unpacked; this might take hours):
+
+```bash
+python -c "from brainwhisperer.data.recipes import RECIPES; [RECIPES[n].build_chain('val').steps['study'].download() for n in ['card', 'willet', 'kunz_t12', 'wairagkar', 'jude']]"
+```
+
+Kunz T15 shares Kunz T12's files. The Wairagkar download includes a 26 GB folder BrainWhisperer does not use, `wairagkar_2025/Wairagkar2025Brain2Voice/t15_neural_data/`, which you can delete.
 
 **4. Optional environment variables**
 
@@ -80,6 +100,20 @@ python eval.py --checkpoint <run_dir>/checkpoints/best-epoch=XXXX.ckpt --config 
 ```
 
 This prints WER, CER and PER for every dataset in the run. Add `--set key=value` to change config values for the evaluation only, for example `--set data.batch_size=32`.
+
+To share a model, convert its checkpoint into a folder holding only the weights and the settings needed to run it. Run this where the training data is:
+
+```bash
+python convert_checkpoint.py --checkpoint <run_dir>/checkpoints/best-epoch=XXXX.ckpt --config <run_dir>/config.yaml --out <folder>
+```
+
+Then evaluate from the folder (or, once published, from its Hugging Face name). Only the datasets you score need to be downloaded:
+
+```bash
+python eval.py --model <folder> --datasets card
+```
+
+It runs on the first available of CUDA, Apple's GPU (MPS) and CPU; choose one with `--device`. On a Mac, if PyTorch reports an operation that MPS does not support, set `PYTORCH_ENABLE_MPS_FALLBACK=1` to run it on the CPU.
 
 `eval_lightbeam.py` takes the same two arguments and decodes Card from the CTC phoneme head with an n-gram and a large language model. Use the `best-per-epoch=XXXX.ckpt` checkpoint for it.
 

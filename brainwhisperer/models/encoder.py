@@ -82,7 +82,7 @@ class BWEncoder(nn.Module):
             if self.training:
                 torch.rand([], device=x.device)
             mask = windowed_mask if i <= self.last_phoneme_layer else None
-            x = layer(x, attention_mask=mask, layer_head_mask=None)[0]
+            x = layer(x, attention_mask=mask)
             all_hidden = all_hidden + (x,)
 
         x = self.layer_norm(x)

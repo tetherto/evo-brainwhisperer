@@ -9,8 +9,16 @@ requires the study data mount (neuralshed `dataset_dir("card_2024")`).
 TestBrainWhisperer downloads openai/whisper-tiny.en (~150 MB) on first run.
 """
 
+import dataclasses
+import json
+import shutil
+
+import numpy as np
 import pytest
 import torch
+from omegaconf import OmegaConf
+from safetensors import safe_open
+from safetensors.torch import load_file, save_file
 from torch.utils.data import DataLoader
 
 from brainwhisperer.config.schema import (
@@ -27,8 +35,10 @@ from brainwhisperer.data.collate import (
 from brainwhisperer.data.recipes import RECIPES
 from brainwhisperer.models.embedder import BWEmbedder
 from brainwhisperer.models.encoder import BWEncoder
-from brainwhisperer.models.model import BrainWhisperer
+from brainwhisperer.models.build import model_card_kwargs
+from brainwhisperer.models.model import HUB_FORMAT_VERSION, BrainWhisperer
 from brainwhisperer.models.positional_encoding import PositionalEncoding
+from brainwhisperer.utils.fill import FILL_NONE
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -249,6 +259,19 @@ class TestBrainWhisperer:
         assert tokens.ndim == 2
         assert tokens.shape[0] == B
 
+    def test_generate_grouped_beams(self, model):
+        # The paper's decoding: transformers 5 runs it only through our copy.
+        with torch.no_grad():
+            tokens = model.generate(
+                _batch(),
+                num_beams=4,
+                num_beam_groups=2,
+                diversity_penalty=0.25,
+                max_new_tokens=10,
+            )
+        assert tokens.ndim == 2
+        assert tokens.shape[0] == B
+
     def test_encoder_only_skips_decoder(self, model):
         # encoder_only=True must return CTC outputs but no ce_loss.
         with torch.no_grad():
@@ -258,6 +281,136 @@ class TestBrainWhisperer:
         assert "x_len" in out
         assert out["phone_logits"].shape == (B, T_CTC, 41)
         assert out["x_len"].shape == (B,)
+
+
+# ---------------------------------------------------------------------------
+# BrainWhisperer — save_pretrained / from_pretrained round trip
+# ---------------------------------------------------------------------------
+
+
+# Shaped like brainwhisperer.models.build.inference_settings.
+_HUB_INFERENCE = {
+    "generation": {"num_beams": 4, "num_beam_groups": 2},
+    "smoothing": {"smooth_kernel_size": 100, "smooth_sigma": 2.0},
+    "max_label_len": 448,
+    "measure_per": True,
+}
+
+
+@pytest.fixture(scope="module")
+def saved_model(tmp_path_factory):
+    """A two-dataset model, its save folder, and the model loaded back from it."""
+    cfg = dataclasses.replace(
+        _model_cfg(),
+        n_embedders=2,
+        whisper_dropout=0.1,  # so train mode has dropout to reproduce
+        encoder=dataclasses.replace(_encoder_cfg(), dropout=0.1),
+    )
+    # As eval.py passes them: DictConfigs, one with a per-dataset override,
+    # and day counts that may be numpy ints.
+    embedder_cfgs = [
+        OmegaConf.structured(cfg.embedder),
+        OmegaConf.merge(cfg.embedder, {"day_proj_rank": 2}),
+    ]
+    m = BrainWhisperer(
+        OmegaConf.structured(cfg),
+        ["e0", "e1"],
+        [np.int64(N_DAYS), 3],
+        [list(range(N_DAYS)), [0, 40, 75]],
+        embedder_cfgs,
+        channel_fills=[FILL_NONE, FILL_NONE],
+        inference=_HUB_INFERENCE,
+    )
+    folder = tmp_path_factory.mktemp("saved_model")
+    m.save_pretrained(folder)
+    return m, folder, BrainWhisperer.from_pretrained(folder)
+
+
+def _two_dataset_batch() -> NeuralBatch:
+    """One sample per embedder, so both the e0 and the shared e1 path run."""
+    batch = _batch()
+    batch.datasets = ["e0", "e1"]
+    batch.day_idx = torch.tensor([N_DAYS - 1, 2])
+    return batch
+
+
+class TestHubRoundTrip:
+    """save_pretrained -> from_pretrained gives back the same model, built from
+    config.json alone (no dataset is read)."""
+
+    def test_config(self, saved_model):
+        _, folder, loaded = saved_model
+        saved = json.loads((folder / "config.json").read_text())
+        assert saved["format_version"] == HUB_FORMAT_VERSION
+        assert saved["num_days_per_embedder"] == [N_DAYS, 3]
+        assert saved["embedder_cfg_per_embedder"][1]["day_proj_rank"] == 2
+        assert saved["pretrained_whisper"] is False
+        assert loaded._hub_mixin_config == saved
+        assert loaded.inference == _HUB_INFERENCE
+
+    @pytest.mark.parametrize("train", [False, True])
+    def test_same_forward(self, saved_model, train):
+        m, _, loaded = saved_model
+        batch = _two_dataset_batch()
+        outs = []
+        for model in (m, loaded):
+            model.train(train)
+            torch.manual_seed(0)  # same dropout masks in train mode
+            with torch.no_grad():
+                outs.append(model(batch))
+        assert torch.equal(outs[0]["ce_loss"], outs[1]["ce_loss"])
+        assert torch.equal(outs[0]["phone_logits"], outs[1]["phone_logits"])
+
+    def test_same_generate(self, saved_model):
+        m, _, loaded = saved_model
+        batch = _two_dataset_batch()
+        ids = []
+        for model in (m, loaded):
+            model.eval()
+            with torch.no_grad():
+                ids.append(model.generate(batch, num_beams=2, max_new_tokens=8))
+        assert torch.equal(ids[0], ids[1])
+
+    def test_shared_weights_relinked(self, saved_model):
+        _, _, loaded = saved_model
+        assert loaded.embedders["e1"].conv1 is loaded.embedders["e0"].conv1
+        assert loaded.embedders["e1"].conv2 is loaded.embedders["e0"].conv2
+        assert (
+            loaded.whisper.proj_out.weight.data_ptr()
+            == loaded.whisper.get_decoder().get_input_embeddings().weight.data_ptr()
+        )
+
+    def test_whisper_encoder_not_saved(self, saved_model):
+        _, folder, _ = saved_model
+        with safe_open(folder / "model.safetensors", "pt") as f:
+            assert not [k for k in f.keys() if k.startswith("whisper.model.encoder.")]
+
+    def test_missing_weight_fails(self, saved_model, tmp_path):
+        _, folder, _ = saved_model
+        shutil.copy(folder / "config.json", tmp_path)
+        weights = load_file(folder / "model.safetensors")
+        del weights["phone_head.weight"]
+        save_file(weights, tmp_path / "model.safetensors")
+        with pytest.raises(RuntimeError, match="phone_head.weight"):
+            BrainWhisperer.from_pretrained(tmp_path)
+
+    def test_rejects_other_format_version(self, saved_model, tmp_path):
+        _, folder, _ = saved_model
+        config = json.loads((folder / "config.json").read_text())
+        (tmp_path / "config.json").write_text(
+            json.dumps({**config, "format_version": 99})
+        )
+        with pytest.raises(ValueError, match="config format 99"):
+            BrainWhisperer.from_pretrained(tmp_path)
+
+    def test_model_card(self, tmp_path):
+        """save_pretrained writes a README.md card with the Hub metadata and
+        the template fully filled in."""
+        m = BrainWhisperer(_model_cfg(), ["card"], [N_DAYS], inference=_HUB_INFERENCE)
+        m.save_pretrained(tmp_path, model_card_kwargs=model_card_kwargs(m))
+        card = (tmp_path / "README.md").read_text()
+        assert "library_name: brainwhisperer" in card
+        assert "{{" not in card and "{%" not in card
 
 
 # ---------------------------------------------------------------------------

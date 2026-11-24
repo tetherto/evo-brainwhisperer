@@ -36,6 +36,7 @@ from brainwhisperer.data.collate import (
     default_ragged_collator,
 )
 from brainwhisperer.data.recipes import RECIPES
+from brainwhisperer.models.build import model_kwargs
 from brainwhisperer.models.model import BrainWhisperer
 from brainwhisperer.prediction import reference_texts
 from brainwhisperer.utils.metrics import word_error_rate
@@ -258,18 +259,10 @@ def main() -> None:
     )
 
     # Model-shape metadata (day-axis size, calendar days) comes from the recipes.
-    num_days_per_embedder = [RECIPES[name].NUM_DAYS for name in cfg.data.datasets]
-    calendar_days_per_embedder = [
-        RECIPES[name].calendar_days() for name in cfg.data.datasets
-    ]
-    embedder_cfg_per_embedder = [
-        OmegaConf.merge(cfg.model.embedder, cfg.data.embedder_overrides.get(name, {}))
-        for name in cfg.data.datasets
-    ]
+    model_args = model_kwargs(cfg)
 
     # Card's val trials from the recipe; the collator hands the loop
-    # ready-made NeuralBatches (Card has no CHANNEL_FILL rule, so the
-    # model is built without fills).
+    # ready-made NeuralBatches.
     val_ds = RECIPES["card"].build_val_dataset(max_label_len=cfg.data.max_seq_len)
     if args.limit:
         from torch.utils.data import Subset
@@ -284,13 +277,7 @@ def main() -> None:
         shuffle=False,
     )
 
-    model = BrainWhisperer(
-        cfg.model,
-        list(cfg.data.datasets),
-        num_days_per_embedder,
-        calendar_days_per_embedder,
-        embedder_cfg_per_embedder,
-    )
+    model = BrainWhisperer(**model_args)
     model.load_checkpoint(args.checkpoint)
     model = model.to(device)
     model.eval()

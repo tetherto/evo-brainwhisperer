@@ -18,7 +18,10 @@ def _adapt(
     phonemes: str,
     day: str,
 ) -> NeuralBatch:
-    """Build the dataclass from a ragged batch and one dataset name per row."""
+    """Build the dataclass from a ragged batch and one dataset name per row.
+
+    Label fields absent from the batch (competition sets) become None.
+    """
     signals = batch.data[neural]
     datasets = list(datasets)
     if len(datasets) != signals.shape[0]:
@@ -27,12 +30,12 @@ def _adapt(
         )
     return NeuralBatch(
         signals=signals,
-        labels=batch.data[whisper],
+        labels=batch.data.get(whisper),
         datasets=datasets,
         day_idx=batch.data[day].to(torch.long).reshape(-1),
         lengths=batch.lengths[neural],
-        phone_seq=batch.data[phonemes],
-        phone_seq_len=batch.lengths[phonemes],
+        phone_seq=batch.data.get(phonemes),
+        phone_seq_len=batch.lengths.get(phonemes),
     )
 
 
